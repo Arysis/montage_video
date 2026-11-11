@@ -1,0 +1,47 @@
+.page {
+  max-width: 400px;
+  margin: 0 auto;
+  padding: 96px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.card {
+  width: 100%;
+  margin-top: 24px;
+  padding: 32px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+.switch :global(.tab) {
+  justify-content: center;
+  height: 40px;
+}
+.switch :global(.tab[aria-selected="true"]) {
+  border: 0;
+}
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+@media (max-width: 767px) {
+  .page {
+    padding: 48px 16px;
+  }
+  .card {
+    padding: 24px;
+  }
+}

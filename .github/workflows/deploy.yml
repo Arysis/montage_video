@@ -1,0 +1,67 @@
+name: Déploiement
+
+# Après chaque fusion sur main : image publiée sur GHCR (pour tout hébergeur Docker),
+# puis mise en ligne sur Fly.io si le secret FLY_API_TOKEN est configuré dans le dépôt.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  image:
+    name: Publier l'image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_DEMO_VIDEO_URL=${{ vars.NEXT_PUBLIC_DEMO_VIDEO_URL }}
+            NEXT_PUBLIC_DEMO_POSTER_URL=${{ vars.NEXT_PUBLIC_DEMO_POSTER_URL }}
+            NEXT_PUBLIC_SHOW_CAPTURES=${{ vars.NEXT_PUBLIC_SHOW_CAPTURES }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  fly:
+    name: Mettre en ligne sur Fly.io
+    needs: image
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Vérifier la configuration
+        id: check
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "FLY_API_TOKEN absent : déploiement ignoré." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: steps.check.outputs.skip != 'true'
+      - name: Déployer
+        if: steps.check.outputs.skip != 'true'
+        run: >-
+          flyctl deploy --remote-only
+          --build-arg NEXT_PUBLIC_DEMO_VIDEO_URL="${{ vars.NEXT_PUBLIC_DEMO_VIDEO_URL }}"
+          --build-arg NEXT_PUBLIC_DEMO_POSTER_URL="${{ vars.NEXT_PUBLIC_DEMO_POSTER_URL }}"
+          --build-arg NEXT_PUBLIC_SHOW_CAPTURES="${{ vars.NEXT_PUBLIC_SHOW_CAPTURES }}"
