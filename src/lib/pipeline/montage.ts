@@ -30,11 +30,12 @@ import {
 } from "@/lib/qc/pre-render";
 import { checkPlatforms, checkReadability, contrastRatio } from "@/lib/qc/rules";
 import { blocksPublication, type QcCheck, type QcReport } from "@/lib/qc/types";
+import { cleanVoice } from "@/lib/audio/voice";
 import { buildAss } from "@/lib/render/ass";
 import { buildFfmpegArgs, run } from "@/lib/render/ffmpeg";
 import type { Script } from "@/lib/script/schema";
 import { storage } from "@/lib/storage";
-import { isRealStt, stt } from "@/lib/stt";
+import { checksRenderedSync, isEstimatedTranscript, isRealStt, stt } from "@/lib/stt";
 import type { MontageJob } from "@/lib/jobs";
 
 export const MAX_ATTEMPTS = 3;
@@ -151,40 +152,33 @@ export async function doMontage(project: Project, job: MontageJob) {
   await mkdir(path.resolve(e.WORK_DIR), { recursive: true });
   const work = await mkdtemp(path.join(path.resolve(e.WORK_DIR), "montage-"));
   try {
-    await setProgress(project.id, 3, "Transcription de ta voix");
     const voiceFile = path.join(work, `voice${path.extname(take.storageKey) || ".webm"}`);
     await storage().download(take.storageKey, voiceFile);
+
+    // Voix nettoyée (débruitage, égalisation, compression, volume), en WAV mono 48 kHz au format
+    // fixe : les prises WebM du navigateur peuvent changer de format audio en cours de route, ce qui
+    // ferait échouer le graphe de filtres du rendu (« Cannot select channel layout »).
+    await setProgress(project.id, 2, "Nettoyage de ta voix");
+    const renderVoice = path.join(work, "voice-render.wav");
+    await cleanVoice(e.FFMPEG_PATH, voiceFile, renderVoice, { rnnModelPath: e.VOICE_DENOISE_MODEL });
+
+    // Sous-titres : ce qui est réellement dit dans la prise, mot à mot, pas le texte du prompteur.
+    await setProgress(project.id, 4, "Transcription de ta voix");
+    const expectedText = script.scenes.map((s) => s.text).join(" ");
     let words = take.words;
-    if (!words?.length) {
+    const stale =
+      !words?.length || (isRealStt() && isEstimatedTranscript(words, expectedText, take.durationSec));
+    if (stale) {
       words = await stt().transcribe({
-        filePath: voiceFile,
-        mime: take.mime,
+        filePath: renderVoice,
+        mime: "audio/wav",
         durationSec: take.durationSec,
-        expectedText: script.scenes.map((s) => s.text).join(" "),
+        expectedText,
       });
       if (!words.length) throw new Error("Aucun mot reconnu dans ta prise. Vérifie ton micro.");
       await db().update(schema.takes).set({ words }).where(eq(schema.takes.id, take.id));
     }
-
-    // Les prises WebM du navigateur peuvent changer de format audio en cours de route, ce qui fait
-    // échouer le graphe de filtres du rendu (« Cannot select channel layout »). On les convertit
-    // d'abord en WAV mono 48 kHz, au format fixe.
-    const renderVoice = path.join(work, "voice-render.wav");
-    await run(e.FFMPEG_PATH, [
-      "-hide_banner",
-      "-nostats",
-      "-y",
-      "-i",
-      voiceFile,
-      "-vn",
-      "-ac",
-      "1",
-      "-ar",
-      "48000",
-      "-c:a",
-      "pcm_s16le",
-      renderVoice,
-    ]);
+    if (!words?.length) throw new Error("Aucun mot reconnu dans ta prise. Vérifie ton micro.");
 
     const assets = await candidateAssets(project, kit);
     const spans = sceneSpans(script.scenes, words);
@@ -306,7 +300,7 @@ export async function doMontage(project: Project, job: MontageJob) {
       const probed = await probe(e.FFPROBE_PATH, out);
       const frames = await analyzeFrames(e.FFMPEG_PATH, out);
       let renderedWords = null;
-      if (isRealStt()) {
+      if (checksRenderedSync()) {
         renderedWords = await stt()
           .transcribe({ filePath: out, mime: "video/mp4", durationSec: probed.durationSec })
           .catch(() => null);

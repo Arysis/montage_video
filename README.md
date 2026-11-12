@@ -24,7 +24,8 @@ vérifie le résultat, puis tu publies ou tu programmes.
 | Worker | `src/worker/index.ts` : un process séparé qui fait le rendu FFmpeg |
 | Fichiers | S3 compatible (Cloudflare R2, Scaleway, AWS) ou disque local en développement |
 | IA | Anthropic (Claude) : script, choix des plans, relecture des images, légendes |
-| Transcription | Deepgram nova-3 en français, horodatage mot à mot, option de non-utilisation des données |
+| Transcription | whisper.cpp en local (modèle small, inclus dans l'image Docker, gratuit et sans clé) ou Deepgram nova-3 (`STT_PROVIDER=deepgram`, plus rapide) ; horodatage mot à mot de ce qui est réellement dit, qui sert aux sous-titres |
+| Voix | nettoyée avant le rendu (`src/lib/audio/voice.ts`) : coupe-bas, débruitage RNNoise puis FFT, égalisation, anti-sifflantes, compression, volume à -16 LUFS |
 | Publication | Ayrshare (TikTok, Instagram, YouTube) |
 | Paiement | Stripe Checkout, portail client, webhook signé |
 | E-mails | Resend (mot de passe oublié) |

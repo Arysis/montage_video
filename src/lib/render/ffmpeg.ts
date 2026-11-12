@@ -100,13 +100,13 @@ export function buildFfmpegArgs(
     `[${videoOut}]ass=filename='${filterPath(media.assPath)}':fontsdir='${filterPath(media.fontsDir)}'[vout]`,
   );
 
-  // Audio : voix nettoyée, musique sous la voix (ducking), puis normalisation à -14 LUFS.
+  // Audio : voix (déjà nettoyée avant le rendu, voir lib/audio/voice.ts), musique sous la voix (ducking), puis normalisation à -14 LUFS.
   const D = plan.durationSec.toFixed(3);
   let voiceLabel: string | null = null;
   if (plan.voice && media.voicePath) {
     args.push("-ss", plan.voice.trimStart.toFixed(3), "-t", D, "-i", media.voicePath);
     filters.push(
-      `[${inputIndex}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,highpass=f=80,afftdn=nf=-25,apad,atrim=0:${D}[voice]`,
+      `[${inputIndex}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=0:${D}[voice]`,
     );
     voiceLabel = "voice";
     inputIndex++;

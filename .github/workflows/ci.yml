@@ -47,7 +47,7 @@ jobs:
           node-version: 22
           cache: npm
       - name: Installer FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg fontconfig
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg fontconfig espeak-ng
       - run: npm ci
       - run: npm run test:integration
 
