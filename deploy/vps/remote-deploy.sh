@@ -73,7 +73,7 @@ end
 # Ce qui écoute déjà sur 80/443 (par exemple pour microdash) est réutilisé, jamais remplacé.
 log "Reverse proxy"
 listeners="$($SUDO ss -ltnpH '( sport = :80 or sport = :443 )' 2>/dev/null || true)"
-echo "${listeners:-Rien n'écoute sur 80/443.}"
+if [ -n "$listeners" ]; then echo "$listeners"; else echo "Rien n'écoute sur 80/443."; fi
 docker_proxy="$($SUDO docker ps --format '{{.Names}} ({{.Image}}) {{.Ports}}' | grep -E ':(80|443)->' || true)"
 [ -n "$docker_proxy" ] && echo "Conteneur sur 80/443 : $docker_proxy"
 
@@ -88,6 +88,9 @@ fi
 echo "Reverse proxy détecté : $PROXY"
 end
 
+
+# Configuré après le lancement de l'app : un souci de proxy ou de certificat ne l'empêche pas de tourner.
+configure_proxy() {
 server_ip="$(curl -fsS -4 --max-time 5 https://api.ipify.org || hostname -I | awk '{print $1}')"
 dns_ip="$(getent ahostsv4 "$DOMAIN" | awk 'NR==1{print $1}' || true)"
 DNS_OK=0
@@ -97,7 +100,7 @@ fi
 
 ensure_certbot() {
   local plugin="$1"
-  command -v certbot >/dev/null 2>&1 && dpkg -s "python3-certbot-$plugin" >/dev/null 2>&1 && return
+  $SUDO certbot plugins 2>/dev/null | grep -q "^\* $plugin" && return
   $SUDO apt-get update -y && $SUDO apt-get install -y certbot "python3-certbot-$plugin"
 }
 certbot_args() {
@@ -117,7 +120,6 @@ case "$PROXY" in
       $SUDO tee "$conf" >/dev/null <<EOF
 server {
     listen 80;
-    listen [::]:80;
     server_name $DOMAIN;
 
     client_max_body_size 600m;
@@ -137,9 +139,13 @@ server {
     }
 }
 EOF
-      [ -n "$link" ] && $SUDO ln -sf "$conf" "$link"
+      if [ -n "$link" ]; then $SUDO ln -sf "$conf" "$link"; fi
     fi
-    $SUDO nginx -t
+    if ! $SUDO nginx -t; then
+      # Ne jamais laisser une config cassée : les autres sites (microdash) ne pourraient plus être rechargés.
+      $SUDO rm -f "$conf" ${link:+"$link"}
+      fail "Config nginx refusée pour $DOMAIN : retirée, rien n'a changé pour les autres sites."
+    fi
     $SUDO systemctl reload nginx
     if [ "$DNS_OK" = 1 ] && ! $SUDO test -d "/etc/letsencrypt/live/$DOMAIN"; then
       ensure_certbot nginx
@@ -190,10 +196,14 @@ EOF
     : # traité après le lancement de l'app, pour qu'elle tourne quand même
     ;;
 esac
+}
 
 # ---------------------------------------------------------------- Lancement
 log "Lancement de $IMAGE"
 cd "$APP_DIR"
+if $SUDO ss -ltnH "sport = :$WEB_PORT" | grep -q . && [ -z "$($SUDO docker compose ps -q web 2>/dev/null)" ]; then
+  fail "Le port $WEB_PORT est déjà pris par une autre app du VPS : choisis-en un autre (WEB_PORT)."
+fi
 echo "$REGISTRY_TOKEN" | $SUDO docker login ghcr.io -u "$REGISTRY_USER" --password-stdin >/dev/null
 profile=()
 [ "$PROXY" = none ] && profile=(--profile caddy)
@@ -216,6 +226,8 @@ if [ "$ok" != 1 ]; then
 fi
 echo "L'app répond."
 end
+
+configure_proxy
 
 if [ "$PROXY" = docker ] || [ "$PROXY" = unknown ]; then
   fail "Les ports 80/443 sont tenus par un proxy que ce script ne sait pas configurer : ${docker_proxy:-$listeners}. L'app tourne sur 127.0.0.1:$WEB_PORT ; il faut ajouter $DOMAIN dans ce proxy."
