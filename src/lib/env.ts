@@ -26,9 +26,16 @@ const schema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default("claude-opus-5-5"),
 
-  // Transcription mot à mot : "deepgram" ou "mock" (timings estimés)
-  STT_PROVIDER: z.enum(["deepgram", "mock"]).default("mock"),
+  // Transcription mot à mot de la voix (sous-titres) : "whisper" (local, gratuit, inclus dans l'image
+  // Docker), "deepgram" (service en ligne, plus rapide) ou "mock" (texte du script, timings estimés)
+  STT_PROVIDER: z.enum(["whisper", "deepgram", "mock"]).default("mock"),
   DEEPGRAM_API_KEY: z.string().optional(),
+  WHISPER_CLI_PATH: z.string().default("whisper-cli"),
+  WHISPER_MODEL_PATH: z.string().default("/opt/whisper/model.bin"),
+  /** 0 : choisi selon le nombre de processeurs (4 au plus). */
+  WHISPER_THREADS: z.coerce.number().int().min(0).default(0),
+  /** Modèle RNNoise pour débruiter la voix ; sans lui, débruitage FFT seul. */
+  VOICE_DENOISE_MODEL: z.string().default("/opt/rnnoise/voice.rnnn"),
 
   // Publication sur les réseaux : "ayrshare" ou "mock"
   PUBLISH_PROVIDER: z.enum(["ayrshare", "mock"]).default("mock"),

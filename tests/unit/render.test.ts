@@ -65,8 +65,9 @@ describe("commande FFmpeg", () => {
     expect(graph).toContain("overlay");
   });
 
-  it("nettoie la voix, baisse la musique sous la voix et normalise le volume", () => {
-    expect(graph).toContain("afftdn");
+  it("baisse la musique sous la voix et normalise le volume", () => {
+    // La voix arrive déjà nettoyée (lib/audio/voice.ts) : pas de second débruitage au rendu.
+    expect(graph).not.toContain("afftdn");
     expect(graph).toContain("sidechaincompress");
     expect(graph).toContain("loudnorm=I=-14");
   });

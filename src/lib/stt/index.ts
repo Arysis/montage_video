@@ -1,6 +1,8 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { env } from "@/lib/env";
 import type { SpeechToText, WordTiming } from "./types";
+import { WhisperStt } from "./whisper";
 
 /** Deepgram (nova-3, français) : horodatage mot à mot. */
 export class DeepgramStt implements SpeechToText {
@@ -39,16 +41,35 @@ export class DeepgramStt implements SpeechToText {
  */
 export class MockStt implements SpeechToText {
   async transcribe(input: { expectedText?: string; durationSec: number }): Promise<WordTiming[]> {
-    const tokens = (input.expectedText ?? "").split(/\s+/).filter(Boolean);
-    if (!tokens.length) return [];
-    const usable = Math.max(0.5, input.durationSec - 0.6);
-    const step = usable / tokens.length;
-    return tokens.map((word, i) => ({
-      word,
-      start: Math.round((0.3 + i * step) * 100) / 100,
-      end: Math.round((0.3 + i * step + step * 0.85) * 100) / 100,
-    }));
+    return estimateWords(input.expectedText ?? "", input.durationSec);
   }
+}
+
+function estimateWords(text: string, durationSec: number): WordTiming[] {
+  const tokens = text.split(/\s+/).filter(Boolean);
+  if (!tokens.length) return [];
+  const usable = Math.max(0.5, durationSec - 0.6);
+  const step = usable / tokens.length;
+  return tokens.map((word, i) => ({
+    word,
+    start: Math.round((0.3 + i * step) * 100) / 100,
+    end: Math.round((0.3 + i * step + step * 0.85) * 100) / 100,
+  }));
+}
+
+/**
+ * Vrai quand ces mots viennent de la transcription simulée (texte du script réparti sur la durée),
+ * et non de l'audio. Sert à refaire la transcription des prises enregistrées avant l'arrivée
+ * d'un vrai moteur de transcription.
+ */
+export function isEstimatedTranscript(words: WordTiming[], expectedText: string, durationSec: number) {
+  const estimated = estimateWords(expectedText, durationSec);
+  return (
+    estimated.length === words.length &&
+    estimated.every(
+      (w, i) => w.word === words[i]!.word && w.start === words[i]!.start && w.end === words[i]!.end,
+    )
+  );
 }
 
 let instance: SpeechToText | undefined;
@@ -59,6 +80,15 @@ export function stt(): SpeechToText {
   if (e.STT_PROVIDER === "deepgram") {
     if (!e.DEEPGRAM_API_KEY) throw new Error("DEEPGRAM_API_KEY manquante");
     instance = new DeepgramStt(e.DEEPGRAM_API_KEY);
+  } else if (e.STT_PROVIDER === "whisper") {
+    if (!existsSync(e.WHISPER_MODEL_PATH))
+      throw new Error(`Modèle de transcription introuvable : ${e.WHISPER_MODEL_PATH}`);
+    instance = new WhisperStt({
+      bin: e.WHISPER_CLI_PATH,
+      model: e.WHISPER_MODEL_PATH,
+      ffmpeg: e.FFMPEG_PATH,
+      threads: e.WHISPER_THREADS,
+    });
   } else {
     if (e.NODE_ENV === "production" && process.env.ALLOW_MOCK_IN_PRODUCTION !== "1") {
       throw new Error("Transcription non configurée (STT_PROVIDER=deepgram et DEEPGRAM_API_KEY).");
@@ -70,6 +100,15 @@ export function stt(): SpeechToText {
 
 export function isRealStt(): boolean {
   return env().STT_PROVIDER !== "mock";
+}
+
+/**
+ * Faut-il retranscrire la vidéo rendue pour vérifier la synchronisation ? Seulement avec un service
+ * rapide (Deepgram) : en local, cela doublerait le temps de transcription pour un test qui passe
+ * presque toujours, la voix du rendu étant celle qui a été transcrite.
+ */
+export function checksRenderedSync(): boolean {
+  return env().STT_PROVIDER === "deepgram";
 }
 
 export function setStt(s: SpeechToText | undefined) {

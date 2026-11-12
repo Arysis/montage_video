@@ -50,12 +50,13 @@ printf 'IMAGE=%s\nDOMAIN=%s\nWEB_PORT=%s\n' "$IMAGE" "$DOMAIN" "$WEB_PORT" | $SU
 
 # Réglages par défaut : l'app tourne avec les services simulés tant que les vraies clés
 # ne sont pas fournies dans le secret GitHub APP_ENV (qui remplace ces valeurs).
+# La transcription (sous-titres) est réelle dès le départ : whisper.cpp tourne dans l'image, sans clé.
 $SUDO tee "$APP_DIR/app.base.env" >/dev/null <<EOF
 NODE_ENV=production
 APP_URL=https://$DOMAIN
 STORAGE_DRIVER=local
 AI_PROVIDER=mock
-STT_PROVIDER=mock
+STT_PROVIDER=whisper
 PUBLISH_PROVIDER=mock
 EMAIL_PROVIDER=log
 ALLOW_MOCK_IN_PRODUCTION=1
