@@ -103,3 +103,9 @@ export function groupCharacters(assets: CharacterImage[]): CharacterGroup[] {
 export function groupOf(groups: CharacterGroup[], assetId: string): CharacterGroup | undefined {
   return groups.find((g) => g.ids.includes(assetId));
 }
+
+/** Une seule image par personnage (sa pose principale) : moins de jetons pour l'IA, liste plus claire. */
+export function mainCharacterImages<T extends CharacterImage>(assets: T[]): T[] {
+  const hidden = new Set(groupCharacters(assets).flatMap((g) => g.ids.filter((id) => id !== g.mainId)));
+  return assets.filter((a) => !hidden.has(a.id));
+}

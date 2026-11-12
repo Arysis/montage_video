@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { Prompter } from "@/components/Prompter";
 import { requireUser } from "@/lib/auth/session";
 import { db, schema } from "@/lib/db";
-import { ownedProject } from "@/lib/projects";
+import { needsScriptValidation, ownedProject } from "@/lib/projects";
 import { scriptToLines } from "@/lib/script/schema";
 
 export const metadata: Metadata = { title: "Prompteur" };
@@ -14,6 +14,7 @@ export default async function PrompterPage({ params }: { params: Promise<{ id: s
   const { id } = await params;
   const p = await ownedProject(user.id, id);
   if (!p.script) redirect(`/app/projets/${p.id}/idee`);
+  if (needsScriptValidation(p)) redirect(`/app/projets/${p.id}/script`);
   const takes = await db()
     .select()
     .from(schema.takes)
@@ -24,7 +25,6 @@ export default async function PrompterPage({ params }: { params: Promise<{ id: s
       projectId={p.id}
       projectName={p.name}
       lines={scriptToLines(p.script).map((l) => l.text)}
-      editorText={p.script.scenes.map((s) => s.text).join("\n\n")}
       selectedTakeId={p.selectedTakeId}
       montageStarted={p.renderStatus !== "idle"}
       takes={takes.map((t) => ({

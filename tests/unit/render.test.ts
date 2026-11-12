@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assColor, assTime, buildAss, escapeAss } from "@/lib/render/ass";
-import { buildFfmpegArgs } from "@/lib/render/ffmpeg";
+import { buildFfmpegArgs, cameraExpressions, mixHex } from "@/lib/render/ffmpeg";
 import { IDS, samplePlan } from "../helpers/fixtures";
 
 const media = {
@@ -72,6 +72,21 @@ describe("commande FFmpeg", () => {
     expect(graph).toContain("loudnorm=I=-14");
   });
 
+  it("génère les fonds animés et les transitions du script", () => {
+    expect(graph).toContain("gradients=");
+    expect(graph).toContain("xfade=transition=fadewhite");
+    expect(graph).toContain("xfade=transition=fade:");
+    expect(graph).toContain("zoompan");
+  });
+
+  it("démarre chaque transition pile au début du plan suivant", () => {
+    const offsets = [...graph.matchAll(/xfade=transition=\w+:duration=[\d.]+:offset=([\d.]+)/g)].map((m) =>
+      Number(m[1]),
+    );
+    const starts = plan.scenes.slice(1).map((s) => Math.round(s.start * 30) / 30);
+    for (const o of offsets) expect(starts.some((st) => Math.abs(st - o) < 0.002)).toBe(true);
+  });
+
   it("ne cite que des fichiers fournis", () => {
     const inputs = args.filter((_, i) => args[i - 1] === "-i");
     for (const input of inputs) {
@@ -83,5 +98,23 @@ describe("commande FFmpeg", () => {
           input.includes("anullsrc"),
       ).toBe(true);
     }
+  });
+});
+
+describe("caméra et couleurs", () => {
+  it("mélange deux couleurs", () => {
+    expect(mixHex("#000000", "#FFFFFF", 0.5)).toBe("#808080");
+    expect(mixHex("#FF5A36", "#FF5A36", 0.3)).toBe("#ff5a36");
+  });
+
+  it("ne bouge pas un plan sans effet", () => {
+    expect(cameraExpressions("none", 60, 30, [], false)).toBeNull();
+  });
+
+  it("ajoute le zoom choc et la secousse", () => {
+    const cam = cameraExpressions("pan-left", 60, 30, [1], true)!;
+    expect(cam.z).toContain("between(on,30,45)");
+    expect(cam.x).toContain("sin(");
+    expect(cam.x).toContain("(iw-iw/zoom)");
   });
 });

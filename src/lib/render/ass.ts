@@ -88,6 +88,19 @@ export function buildAss(plan: EditPlan, opts: { watermarkText?: string } = {}):
       Math.round(zone.top + 40),
     ),
     style(
+      "Big",
+      plan.brand.titleFont,
+      Math.round(titleSize * 1.45),
+      assColor(plan.brand.text),
+      assColor("#000000", 0x60),
+      1,
+      Math.max(3, Math.round(titleSize / 16)),
+      5,
+      layout.marginH,
+      layout.marginH,
+      0,
+    ),
+    style(
       "Mark",
       plan.brand.bodyFont,
       Math.round(s.sizePx * 0.45),
@@ -127,10 +140,16 @@ export function buildAss(plan: EditPlan, opts: { watermarkText?: string } = {}):
     }
   }
 
+  // Texte à l'écran : il apparaît en « pop » (petit rebond). Sur un fond généré, il prend
+  // toute la place au centre, comme un titre animé ; sur une image, il reste en haut.
+  const pop = "{\\fad(80,160)\\fscx70\\fscy70\\t(0,160,\\fscx108\\fscy108)\\t(160,260,\\fscx100\\fscy100)}";
   for (const scene of plan.scenes) {
     if (scene.overlayText) {
-      const text = wrapLines(escapeAss(scene.overlayText), layout.maxChars).join("\\N");
-      ev(2, scene.start, Math.min(scene.end, scene.start + 3), "Title", text);
+      const big = scene.visual.type !== "asset" && !scene.character;
+      const width = big ? Math.max(8, Math.round(layout.maxChars / 1.45)) : layout.maxChars;
+      const text = wrapLines(escapeAss(scene.overlayText), width).join("\\N");
+      const end = big ? scene.end : Math.min(scene.end, scene.start + 3);
+      ev(2, scene.start, end, big ? "Big" : "Title", `${pop}${text}`);
     }
   }
 

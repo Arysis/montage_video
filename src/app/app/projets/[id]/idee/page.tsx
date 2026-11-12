@@ -20,7 +20,7 @@ export default async function IdeaPage({ params }: { params: Promise<{ id: strin
   const [kit] = await db().select().from(schema.brandKits).where(eq(schema.brandKits.userId, user.id));
   return (
     <>
-      <TopBar eyebrow={`${p.name} · Étape 1 sur 4`} title="Idée et fichiers" />
+      <TopBar eyebrow={`${p.name} · Étape 1 sur 5`} title="Idée et fichiers" />
       <NewVideoForm
         library={library}
         maxDurationSec={planLimits(user.plan).maxDurationSec}

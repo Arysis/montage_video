@@ -2,7 +2,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { classifyUpload, formatBytes, sniffMatches } from "@/lib/assets";
 import { resetEnvCache } from "@/lib/env";
 import { loudnessCorrection } from "@/lib/pipeline/montage";
-import { scriptFromEditorText, scriptToLines, estimateSpeechSeconds } from "@/lib/script/schema";
+import { directionsFromScript } from "@/lib/plan/directions";
+import {
+  estimateSpeechSeconds,
+  normalizeScript,
+  sanitizeScript,
+  scriptFromEditorText,
+  scriptToLines,
+} from "@/lib/script/schema";
 import { signKey, verifySignedKey } from "@/lib/storage";
 import { parisInputValues, parisToUtc } from "@/lib/time";
 import { script } from "../helpers/fixtures";
@@ -59,6 +66,58 @@ describe("script et prompteur", () => {
     expect(edited.scenes.map((s) => s.id)).toEqual(["s1", "s2", "s3"]);
     expect(edited.scenes[0]!.onScreenText).toBe("3 erreurs");
     expect(scriptFromEditorText(script, "   ").scenes).toEqual(script.scenes);
+  });
+
+  it("complète un ancien script avec les réglages de montage par défaut", () => {
+    const old = normalizeScript({
+      title: "Ancien",
+      scenes: [{ id: "s1", text: "Bonjour.", visualIntent: "plan", onScreenText: null }],
+      caption: "",
+      hashtags: [],
+    });
+    expect(old.scenes[0]).toMatchObject({
+      visuals: [],
+      background: "aurore",
+      transition: "cut",
+      character: null,
+    });
+    expect(old.subtitles.enabled).toBe(true);
+    expect(old.validatedAt).toBeNull();
+  });
+
+  it("écarte les fichiers inconnus et renumérote les scènes", () => {
+    const clean = sanitizeScript(
+      {
+        ...script,
+        musicAssetId: "inconnu",
+        scenes: script.scenes.map((s, i) => ({
+          ...s,
+          id: `x${i}`,
+          visuals: ["a", "inconnu", "a"],
+          character: { assetId: "inconnu", talking: true },
+        })),
+      },
+      new Set(["a"]),
+    );
+    expect(clean.musicAssetId).toBeNull();
+    expect(clean.scenes[0]!.visuals).toEqual(["a"]);
+    expect(clean.scenes[0]!.character).toBeNull();
+    expect(clean.scenes.map((s) => s.id)).toEqual(["s1", "s2", "s3", "s4"]);
+  });
+
+  it("garde les choix de montage quand on retouche le texte", () => {
+    const edited = scriptFromEditorText(
+      { ...script, scenes: script.scenes.map((s) => ({ ...s, background: "nuit" as const })) },
+      "Un.\n\nDeux.",
+    );
+    expect(edited.scenes[1]!.background).toBe("nuit");
+  });
+
+  it("donne au montage les choix du script", () => {
+    const d = directionsFromScript(script);
+    expect(d.scenes.map((s) => s.sceneId)).toEqual(["s1", "s2", "s3", "s4"]);
+    expect(d.scenes[0]!.overlayText).toBe("3 erreurs");
+    expect(d.subtitles).toBe(true);
   });
 
   it("estime la durée de lecture", () => {

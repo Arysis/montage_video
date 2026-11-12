@@ -1,6 +1,5 @@
-import type { Directions } from "@/lib/plan/directions";
-import type { Script } from "@/lib/script/schema";
-import type { AiProvider, Caption, DirectionRequest, ReviewIssue, ScriptRequest } from "./types";
+import { BACKGROUND_STYLES, normalizeScript, type Script } from "@/lib/script/schema";
+import type { AiProvider, Caption, ReviewIssue, ReviseRequest, ScriptRequest } from "./types";
 
 /**
  * Fournisseur IA déterministe, sans appel réseau.
@@ -22,41 +21,49 @@ export class MockProvider implements AiProvider {
       "Explique ensuite comment tu y es arrivé.",
       "Abonne-toi pour la suite.",
     ];
-    return {
+    const visuals = req.assets.filter((a) => a.kind === "video" || a.kind === "image");
+    const character = req.assets.find((a) => a.kind === "character");
+    const music = req.assets.find((a) => a.kind === "music");
+    const transitions = ["flash", "cut", "slide", "cut", "cut"] as const;
+    const backgrounds = ["aurore", "particules", "nuit", "degrade", "aurore"] as const;
+    let cursor = 0;
+    return normalizeScript({
       title: topic,
+      pace: "fast",
+      musicAssetId: music?.id ?? null,
       scenes: sentences.map((text, i) => ({
         id: `s${i + 1}`,
         text,
         visualIntent: i === 0 ? "Plan d'accroche" : "Plan qui illustre la phrase",
         onScreenText: i === 0 ? topic.slice(0, 40) : null,
+        // Une scène sur deux montre les fichiers, les autres un fond généré.
+        visuals:
+          visuals.length && i % 2 === 1
+            ? [...new Set([visuals[cursor++ % visuals.length]!.id, visuals[cursor++ % visuals.length]!.id])]
+            : [],
+        background: backgrounds[i]!,
+        effects: i === 0 ? ["punch", "shake"] : i % 2 ? ["zoom-in", "pan"] : ["zoom-out"],
+        transition: transitions[i]!,
+        character: character && i === 0 ? { assetId: character.id, talking: true } : null,
+        emphasis: i === 0 ? [topic.split(" ")[0] ?? ""].filter(Boolean) : [],
       })),
       caption: `${topic}. Regarde jusqu'au bout.`,
       hashtags: ["#conseils", "#createur", "#video"],
-    };
+    });
   }
 
-  async directMontage(req: DirectionRequest): Promise<Directions> {
-    const visuals = req.assets.filter((a) => ["video", "image", "character"].includes(a.kind));
-    const music = req.assets.find((a) => a.kind === "music");
-    let cursor = 0;
+  async reviseScript(req: ReviseRequest): Promise<Script> {
+    const visuals = req.assets.filter((a) => a.kind === "video" || a.kind === "image");
     return {
-      pace: "normal",
-      musicAssetId: music?.id ?? null,
-      musicVolumeDb: -20,
+      ...req.script,
       scenes: req.script.scenes.map((s, i) => {
-        const keep =
-          req.sceneId && req.sceneId !== s.id
-            ? req.previous?.scenes.find((p) => p.sceneId === s.id)
-            : undefined;
-        if (keep) return keep;
-        const ids = visuals.length
-          ? [visuals[cursor++ % visuals.length]!.id, visuals[cursor++ % visuals.length]!.id]
-          : [];
+        if (req.sceneId && req.sceneId !== s.id) return s;
+        const other = visuals.find((v) => !s.visuals.includes(v.id));
         return {
-          sceneId: s.id,
-          assetIds: [...new Set(ids)],
-          motion: i % 2 === 0 ? "zoom-in" : "zoom-out",
-          overlayText: s.onScreenText,
+          ...s,
+          visuals: other ? [other.id] : [],
+          background: BACKGROUND_STYLES[(BACKGROUND_STYLES.indexOf(s.background) + 1) % 4]!,
+          effects: i % 2 ? ["zoom-out"] : ["zoom-in", "punch"],
         };
       }),
     };

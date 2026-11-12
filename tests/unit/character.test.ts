@@ -167,15 +167,21 @@ describe("personnage dans le plan de montage", () => {
     { id: CHAR.closed, kind: "character", characterName: "renard", pose: "closed" },
     { id: CHAR.open, kind: "character", characterName: "renard", pose: "open" },
   ])[0]!;
-  const build = (format: "9:16" | "16:9" | "1:1" = "9:16") =>
+  const build = (format: "9:16" | "16:9" | "1:1" = "9:16", scriptPlaces?: "visual" | "slot") =>
     buildPlan({
       format,
       script,
       take: { id: IDS["take-1"], durationSec: duration, words },
-      // L'IA a mis le personnage en fond d'une scène : il doit être incrusté, pas en fond.
+      // Sans personnage dans le script, celui du projet parle partout. Sinon le script décide.
       directions: {
         ...directions,
-        scenes: directions.scenes.map((s, i) => (i === 0 ? { ...s, assetIds: [CHAR.closed] } : s)),
+        scenes: directions.scenes.map((s, i) =>
+          i !== 0 || !scriptPlaces
+            ? s
+            : scriptPlaces === "visual"
+              ? { ...s, assetIds: [CHAR.open] }
+              : { ...s, character: { assetId: CHAR.open, talking: false } },
+        ),
       },
       assets: [
         ...assets,
@@ -200,6 +206,21 @@ describe("personnage dans le plan de montage", () => {
     expect(rig.mouth).toHaveLength(Math.round(plan.durationSec * 30));
     expect(rig.mouth).toMatch(/o/);
     expect(referencedAssetIds(plan)).toEqual(expect.arrayContaining([CHAR.closed, CHAR.open]));
+  });
+
+  it("suit le script quand il place le personnage", () => {
+    // Choisi comme visuel (même par une autre pose) : incrusté, pas en fond, et il parle.
+    const asVisual = build("9:16", "visual");
+    const s1 = asVisual.scenes.filter((s) => s.id.split(".")[0] === "s1");
+    expect(s1.every((s) => s.character?.assetId === CHAR.closed && s.character.talking)).toBe(true);
+    expect(asVisual.scenes.filter((s) => s.character).length).toBe(s1.length);
+    expect(asVisual.scenes.some((s) => s.visual.type === "asset" && s.visual.assetId === CHAR.open)).toBe(
+      false,
+    );
+    // Placé dans la scène sans parler : bouche fermée.
+    const silent = build("9:16", "slot");
+    expect(silent.scenes[0]!.character).toEqual({ assetId: CHAR.closed, talking: false });
+    expect(silent.characterRigs![CHAR.closed]!.mouth).not.toMatch(/o/);
   });
 
   it("place le personnage en bas et décale les sous-titres pour ne pas le cacher", () => {
@@ -248,7 +269,7 @@ describe("personnage dans le plan de montage", () => {
     const args = buildFfmpegArgs(plan, media, "/tmp/out.mp4");
     const graph = args[args.indexOf("-filter_complex") + 1]!;
     expect(args.join(" ")).toContain("-f concat -safe 0 -i /tmp/char/mouth.ffconcat");
-    expect(graph).toMatch(/\[vcat\]\[char0\]overlay=/);
+    expect(graph).toMatch(/\[j\d+\]\[char0\]overlay=/);
     expect(graph).toContain("[vchar0]");
   });
 });

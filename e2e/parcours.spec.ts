@@ -33,9 +33,17 @@ test("de l'idée à la publication", async ({ page }) => {
     page.getByRole("list", { name: "Fichiers ajoutés" }).getByText("photo-produit.png"),
   ).toBeVisible();
   await page.getByRole("button", { name: "Générer le script" }).click();
+  await page.waitForURL(/\/script$/);
+
+  // Étape 2 : script détaillé, relu puis validé
+  await expect(page.getByRole("heading", { name: /Scène 1/ })).toBeVisible();
+  await expect(page.getByLabel("Ce que tu dis").first()).not.toBeEmpty();
+  await page.getByLabel("Texte à l'écran").first().fill("3 erreurs");
+  await page.getByLabel("Vers la scène 2").selectOption("flash");
+  await page.getByRole("button", { name: "Valider le script et enregistrer ma voix" }).click();
   await page.waitForURL(/\/prompteur$/);
 
-  // Étape 2 : prompteur, enregistrement avec le micro simulé
+  // Étape 3 : prompteur, enregistrement avec le micro simulé
   await page.getByLabel("Compte à rebours").selectOption("0");
   await page.getByRole("button", { name: "Lancer l'enregistrement" }).click();
   await page.waitForTimeout(12_000);
@@ -43,7 +51,7 @@ test("de l'idée à la publication", async ({ page }) => {
   await expect(page.getByText("Prise 1")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Retenue")).toBeVisible();
 
-  // Étape 3 : montage
+  // Étape 4 : montage
   await page.getByRole("button", { name: "Passer au montage" }).click();
   await page.waitForURL(/\/montage$/);
   await expect(page.getByText(/L'IA a vérifié \d+ points/)).toBeVisible({ timeout: 200_000 });
@@ -57,7 +65,7 @@ test("de l'idée à la publication", async ({ page }) => {
   }
   await expect(page.getByText("La publication est bloquée")).toHaveCount(0);
 
-  // Étape 4 : publication
+  // Étape 5 : publication
   await page.getByRole("link", { name: "Passer à la publication" }).click();
   await page.waitForURL(/\/publication$/);
   // Premier passage : aucun compte relié, on relie (service simulé).

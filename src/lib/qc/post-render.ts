@@ -163,7 +163,7 @@ const overlaps = (a: { start: number; end: number }, b: { start: number; end: nu
 export function checkFrames(plan: EditPlan, a: FrameAnalysis): QcCheck[] {
   const checks: QcCheck[] = [];
   // Un fond de couleur sombre voulu par le plan n'est pas un écran noir accidentel.
-  const intendedDark = plan.scenes.filter((s) => s.visual.type === "color");
+  const intendedDark = plan.scenes.filter((s) => s.visual.type !== "asset");
   const unexpectedBlack = a.black.filter(
     (b) => !intendedDark.some((s) => overlaps(b, s) >= (b.end - b.start) * 0.8),
   );
@@ -364,9 +364,14 @@ export async function extractSceneFrames(
   file: string,
   plan: EditPlan,
   outDir: string,
+  opts: { width?: number; onePerScene?: boolean } = {},
 ): Promise<{ sceneId: string; path: string }[]> {
   const frames: { sceneId: string; path: string }[] = [];
-  for (const scene of plan.scenes.slice(0, 12)) {
+  // Une image par scène du script (et non par plan) suffit pour la relecture.
+  const scenes = opts.onePerScene
+    ? plan.scenes.filter((s) => !s.id.includes(".") || s.id.endsWith(".1"))
+    : plan.scenes;
+  for (const scene of scenes.slice(0, 12)) {
     const t = (scene.start + scene.end) / 2;
     const out = path.join(outDir, `frame-${scene.id}.jpg`);
     await run(ffmpeg, [
@@ -380,7 +385,7 @@ export async function extractSceneFrames(
       "-frames:v",
       "1",
       "-vf",
-      "scale=540:-2",
+      `scale=${opts.width ?? 540}:-2`,
       "-q:v",
       "4",
       out,

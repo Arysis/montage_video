@@ -9,8 +9,9 @@ import { requireUser } from "@/lib/auth/session";
 import { planLimits } from "@/lib/billing/plans";
 import { db, schema } from "@/lib/db";
 import { enqueue, QUEUES } from "@/lib/jobs";
-import { linkAssets, ownedProject, projectAssets, usage } from "@/lib/projects";
-import { scriptFromEditorText } from "@/lib/script/schema";
+import { linkAssets, needsScriptValidation, ownedProject, projectAssets, usage } from "@/lib/projects";
+import { mainCharacterImages } from "@/lib/character/poses";
+import { normalizeScript, sanitizeScript, scriptSchema } from "@/lib/script/schema";
 import { storage } from "@/lib/storage";
 
 export type ActionState = { error?: string; ok?: string } | undefined;
@@ -83,7 +84,7 @@ export async function createProject(_prev: ActionState, form: FormData): Promise
   await linkAssets(user.id, projectId, assetIds);
 
   try {
-    const assets = await projectAssets(projectId);
+    const assets = mainCharacterImages(await projectAssets(projectId));
     const script = await ai().generateScript({
       idea: parsed.data.idea,
       format: parsed.data.format,
@@ -104,25 +105,77 @@ export async function createProject(_prev: ActionState, form: FormData): Promise
         name: script.title.slice(0, 60),
         caption: script.caption,
         hashtags: script.hashtags.join(" "),
-        status: "prompteur",
+        status: "script",
       })
       .where(eq(schema.projects.id, projectId));
   } catch (err) {
     return { error: aiError(err) };
   }
-  redirect(`/app/projets/${projectId}/prompteur`);
+  redirect(`/app/projets/${projectId}/script`);
 }
 
-export async function saveScript(projectId: string, text: string): Promise<ActionState> {
+/** Lit et vérifie le script détaillé envoyé par l'éditeur. */
+async function parseEditedScript(userId: string, projectId: string, json: string) {
+  const p = await ownedProject(userId, projectId);
+  if (!p.script) return { error: "Aucun script à modifier." } as const;
+  if (json.length > 60_000) return { error: "Le script est trop long." } as const;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return { error: "Script illisible. Recharge la page." } as const;
+  }
+  const parsed = scriptSchema.safeParse(raw);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return {
+      error:
+        issue?.path.includes("text") || issue?.path.includes("scenes")
+          ? "Chaque scène doit avoir un texte dit."
+          : "Le script contient une valeur invalide.",
+    } as const;
+  }
+  const words = parsed.data.scenes.reduce((n, s) => n + s.text.split(/\s+/).filter(Boolean).length, 0);
+  if (words > 900) return { error: "Le script est trop long." } as const;
+  const owned = await db()
+    .select({ id: schema.assets.id })
+    .from(schema.assets)
+    .where(eq(schema.assets.userId, userId));
+  const script = sanitizeScript(
+    { ...parsed.data, validatedAt: normalizeScript(p.script).validatedAt },
+    new Set(owned.map((a) => a.id)),
+  );
+  return { project: p, script } as const;
+}
+
+/** Enregistre le script détaillé modifié à la main (aucun appel à l'IA). */
+export async function saveScriptDraft(projectId: string, json: string): Promise<ActionState> {
   const user = await requireUser();
-  const p = await ownedProject(user.id, projectId);
-  if (!p.script) return { error: "Aucun script à modifier." };
-  if (text.trim().length < 5) return { error: "Le script est vide." };
-  if (text.length > 6000) return { error: "Le script est trop long." };
-  const script = scriptFromEditorText(p.script, text);
-  await db().update(schema.projects).set({ script }).where(eq(schema.projects.id, p.id));
-  revalidatePath(`/app/projets/${p.id}/prompteur`);
+  const res = await parseEditedScript(user.id, projectId, json);
+  if ("error" in res) return { error: res.error };
+  await db()
+    .update(schema.projects)
+    .set({ script: res.script, name: res.script.title.slice(0, 60) })
+    .where(eq(schema.projects.id, res.project.id));
+  revalidatePath(`/app/projets/${res.project.id}/script`);
   return { ok: "Script enregistré." };
+}
+
+/** Valide le script : le prompteur et le montage le suivront tel quel. */
+export async function validateScript(projectId: string, json: string): Promise<ActionState> {
+  const user = await requireUser();
+  const res = await parseEditedScript(user.id, projectId, json);
+  if ("error" in res) return { error: res.error };
+  const p = res.project;
+  await db()
+    .update(schema.projects)
+    .set({
+      script: { ...res.script, validatedAt: new Date().toISOString() },
+      name: res.script.title.slice(0, 60),
+      status: p.status === "draft" || p.status === "script" ? "prompteur" : p.status,
+    })
+    .where(eq(schema.projects.id, p.id));
+  redirect(`/app/projets/${p.id}/prompteur`);
 }
 
 export async function selectTake(projectId: string, takeId: string) {
@@ -162,6 +215,7 @@ async function queueMontage(
   const user = await requireUser();
   const p = await ownedProject(user.id, projectId);
   if (!p.selectedTakeId) return { error: "Retiens d'abord une prise au prompteur." };
+  if (needsScriptValidation(p)) return { error: "Valide d'abord ton script." };
   if (p.renderStatus === "queued" || p.renderStatus === "running")
     return { error: "Un montage est déjà en cours." };
   if (!p.countedAt) {

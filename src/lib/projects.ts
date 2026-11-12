@@ -76,9 +76,15 @@ export const PLATFORM_SHORT: Record<string, string> = {
   youtube: "Short",
 };
 
+/** Le script détaillé attend d'être relu et validé (les anciens projets passent directement). */
+export function needsScriptValidation(p: Pick<Project, "script" | "status">): boolean {
+  return !!p.script && !p.script.validatedAt && (p.status === "draft" || p.status === "script");
+}
+
 /** Étape où reprendre un projet. */
 export function projectStep(p: Project): string {
   if (!p.script) return "idee";
+  if (needsScriptValidation(p)) return "script";
   if (!p.selectedTakeId) return "prompteur";
   if (p.status === "ready" || p.status === "scheduled" || p.status === "published") return "publication";
   return "montage";

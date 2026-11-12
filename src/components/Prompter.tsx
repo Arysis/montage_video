@@ -3,8 +3,9 @@
 import { Check, Microphone, Pause, Play, Record, Stop, Trash } from "@phosphor-icons/react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
-import { deleteTake, saveScript, selectTake, startMontage } from "@/app/actions/projects";
-import { FormError, FormSuccess } from "./FormMessage";
+import Link from "next/link";
+import { deleteTake, selectTake, startMontage } from "@/app/actions/projects";
+import { FormError } from "./FormMessage";
 import { TopBar } from "./TopBar";
 import styles from "./app.module.css";
 import p from "./prompter.module.css";
@@ -22,7 +23,6 @@ type Props = {
   projectId: string;
   projectName: string;
   lines: string[];
-  editorText: string;
   takes: Take[];
   selectedTakeId: string | null;
   montageStarted: boolean;
@@ -49,15 +49,7 @@ function pickMime(): string {
   return candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? "";
 }
 
-export function Prompter({
-  projectId,
-  projectName,
-  lines,
-  editorText,
-  takes,
-  selectedTakeId,
-  montageStarted,
-}: Props) {
+export function Prompter({ projectId, projectName, lines, takes, selectedTakeId, montageStarted }: Props) {
   const router = useRouter();
   const [speed, setSpeed] = useState(2);
   const [size, setSize] = useState(37);
@@ -73,14 +65,12 @@ export function Prompter({
   const [level, setLevel] = useState(0);
   const [playing, setPlaying] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const [scriptMsg, setScriptMsg] = useState<{ error?: string; ok?: string }>({});
 
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const lineRefs = useRef<(HTMLParagraphElement | null)[]>([]);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const currentRef = useRef(0);
   currentRef.current = current;
 
@@ -266,17 +256,6 @@ export function Prompter({
     setPlaying(take.id);
   };
 
-  const submitScript = (form: FormData) => {
-    startTransition(async () => {
-      const res = await saveScript(projectId, String(form.get("script") ?? ""));
-      setScriptMsg(res ?? {});
-      if (res?.ok) {
-        dialogRef.current?.close();
-        setCurrent(0);
-      }
-    });
-  };
-
   const goMontage = () => {
     setError(undefined);
     startTransition(async () => {
@@ -291,20 +270,16 @@ export function Prompter({
   return (
     <>
       <TopBar
-        eyebrow={`${projectName} · Étape 2 sur 4`}
+        eyebrow={`${projectName} · Étape 3 sur 5`}
         title="Prompteur"
         actions={
-          <button
-            type="button"
+          <Link
+            href={`/app/projets/${projectId}/script`}
             className="btn btn-secondary"
-            disabled={busy}
-            onClick={() => {
-              setScriptMsg({});
-              dialogRef.current?.showModal();
-            }}
+            aria-disabled={busy || undefined}
           >
             Modifier le script
-          </button>
+          </Link>
         }
       />
       <div className={styles.body}>
@@ -517,38 +492,6 @@ export function Prompter({
           </section>
         </aside>
       </div>
-
-      <dialog ref={dialogRef} aria-labelledby="script-title">
-        <form action={submitScript} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <h2 id="script-title" className="h3">
-            Modifier le script
-          </h2>
-          <div className="field">
-            <label htmlFor="script" className="label">
-              Ton texte
-            </label>
-            <textarea
-              id="script"
-              name="script"
-              className="textarea"
-              rows={14}
-              defaultValue={editorText}
-              maxLength={6000}
-            />
-            <p className="help">Un paragraphe par partie. Laisse une ligne vide entre deux parties.</p>
-          </div>
-          <FormError message={scriptMsg.error} />
-          <FormSuccess message={scriptMsg.ok} />
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button type="button" className="btn btn-secondary" onClick={() => dialogRef.current?.close()}>
-              Annuler
-            </button>
-            <button type="submit" className="btn btn-primary" disabled={pending}>
-              Enregistrer le script
-            </button>
-          </div>
-        </form>
-      </dialog>
     </>
   );
 }
