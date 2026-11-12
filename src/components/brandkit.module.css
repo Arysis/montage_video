@@ -1,0 +1,234 @@
+.logoGrid,
+.twoCols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.threeCols {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.logoCard {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.logoFrame {
+  height: 172px;
+  padding: 16px;
+}
+.logoFrame[data-dark] {
+  background: #0e0f11;
+  border: 1px solid var(--color-border);
+}
+.logoFrame img {
+  max-height: 100%;
+  max-width: 100%;
+  object-fit: contain;
+}
+.logoRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.colorGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.colorCard {
+  position: relative;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.swatch {
+  display: block;
+  height: 56px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  margin-bottom: 8px;
+  position: relative;
+}
+.swatch input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.swatch:has(input:focus-visible) {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.colorName,
+.colorHex {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--color-text);
+  font: inherit;
+  padding: 2px 4px;
+  width: 100%;
+}
+.colorName {
+  font-weight: 500;
+}
+.colorHex {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--color-text-subtle);
+}
+.colorName:hover,
+.colorHex:hover {
+  border-color: var(--color-border);
+}
+.colorName:focus,
+.colorHex:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.removeColor {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+.addColor {
+  min-height: 120px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--color-text-muted);
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background-color 120ms var(--ease);
+}
+.addColor:hover {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.fieldset legend {
+  margin-bottom: 8px;
+}
+.styleOption {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 12px;
+}
+.preview {
+  position: relative;
+  width: 100%;
+  max-width: 280px;
+  aspect-ratio: 9 / 16;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  align-self: center;
+}
+.previewLogo {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 22%;
+  display: flex;
+  justify-content: flex-end;
+}
+.previewLogo img {
+  max-width: 100%;
+  max-height: 48px;
+  object-fit: contain;
+}
+.previewTitle {
+  position: absolute;
+  top: 18%;
+  left: 12px;
+  right: 12px;
+  font-weight: 700;
+  font-size: 24px;
+  line-height: 28px;
+}
+.previewSub {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 22%;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+.previewSub[data-position="center"] {
+  bottom: auto;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+.pickerGrid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.pickerItem {
+  width: 100%;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.pickerItem img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  background: var(--color-surface-raised);
+  border-radius: var(--radius);
+}
+.pickerItem .caption {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 767px) {
+  .logoGrid,
+  .twoCols,
+  .threeCols {
+    grid-template-columns: 1fr;
+  }
+  .colorGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+}

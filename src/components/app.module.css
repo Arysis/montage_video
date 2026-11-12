@@ -1,0 +1,224 @@
+.shell {
+  min-height: 100vh;
+  display: flex;
+  font-size: 14px;
+  line-height: 20px;
+}
+.sidebar {
+  width: 240px;
+  flex: none;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 24px;
+}
+.brand:hover {
+  text-decoration: none;
+}
+.navGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 500;
+}
+.groupLabel {
+  padding: 0 12px 4px;
+}
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  color: var(--color-text-muted);
+  transition: background-color 120ms var(--ease);
+}
+.navItem:hover {
+  background: var(--color-surface-raised);
+  text-decoration: none;
+}
+.navItem[aria-current] {
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+}
+.stepNum {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.stepNum[data-active] {
+  border-color: var(--color-primary);
+}
+.account {
+  margin-top: auto;
+  border-top: 1px solid var(--color-border);
+  padding: 16px 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.avatar {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.topbar {
+  min-height: 68px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--color-border);
+}
+.topbar h1 {
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+}
+.topActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.content {
+  flex: 1;
+  min-width: 0;
+  padding: 24px;
+}
+.contentNarrow {
+  flex: 1;
+  min-width: 0;
+  padding: 40px 24px 64px;
+}
+.contentNarrow > * {
+  max-width: 640px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.panel {
+  width: 360px;
+  flex: none;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.panel h2 {
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sectionTitle {
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+}
+.mobileBar {
+  display: none;
+}
+.desktopOnly {
+}
+@media (max-width: 1023px) {
+  .shell {
+    flex-direction: column;
+  }
+  .mobileBar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface);
+  }
+  .desktopOnly {
+    display: none;
+  }
+  .sidebar {
+    display: none;
+    width: 100%;
+    height: auto;
+    position: static;
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .sidebarOpen {
+    display: flex;
+  }
+  .account {
+    margin-top: 0;
+  }
+  .body {
+    flex-direction: column;
+  }
+  .panel {
+    width: 100%;
+    border-left: 0;
+    border-top: 1px solid var(--color-border);
+  }
+}
+@media (max-width: 767px) {
+  .topbar,
+  .content,
+  .contentNarrow,
+  .panel {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}

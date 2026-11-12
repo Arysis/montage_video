@@ -1,0 +1,46 @@
+# Lancement complet en local : docker compose up --build
+# Copie .env.example en .env avant (les valeurs simulées suffisent pour essayer).
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: montage
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 10
+
+  worker:
+    build: .
+    command: ["sh", "-c", "node dist/lib/db/migrate-cli.js && node dist/worker/index.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/montage
+      STORAGE_LOCAL_DIR: /app/.data/storage
+    volumes:
+      - storage:/app/.data
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/montage
+      STORAGE_LOCAL_DIR: /app/.data/storage
+    ports:
+      - "3000:3000"
+    volumes:
+      - storage:/app/.data
+    depends_on:
+      worker:
+        condition: service_started
+
+volumes:
+  db:
+  storage:

@@ -1,0 +1,8 @@
+drizzle
+.next
+dist
+node_modules
+coverage
+playwright-report
+test-results
+.data

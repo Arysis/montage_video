@@ -1,0 +1,63 @@
+{
+  "name": "montage-video",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "worker": "tsx src/worker/index.ts",
+    "worker:prod": "node dist/worker/index.js",
+    "db:migrate:prod": "node dist/lib/db/migrate-cli.js",
+    "build:worker": "esbuild src/worker/index.ts src/lib/db/migrate-cli.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outdir=dist --alias:@=./src",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "playwright test",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/lib/db/migrate-cli.ts",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "@aws-sdk/client-s3": "^3.1167.0",
+    "@aws-sdk/lib-storage": "^3.1167.0",
+    "@aws-sdk/s3-request-presigner": "^3.1167.0",
+    "@fontsource/bricolage-grotesque": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
+    "@node-rs/argon2": "^2.2.2",
+    "@phosphor-icons/react": "^2.1.10",
+    "drizzle-orm": "^0.45.4",
+    "next": "^15.5.29",
+    "pg": "^8.23.1",
+    "pg-boss": "^12.38.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "sharp": "^0.35.5",
+    "stripe": "^23.1.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.7",
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitest/coverage-v8": "^5.1.0",
+    "drizzle-kit": "^0.31.11",
+    "esbuild": "^0.28.2",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.29",
+    "prettier": "^3.10.0",
+    "tsx": "^4.23.15",
+    "typescript": "5.9",
+    "vitest": "^5.1.0"
+  }
+}
