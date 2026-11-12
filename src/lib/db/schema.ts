@@ -138,6 +138,10 @@ export const assets = pgTable(
     thumbKey: text("thumb_key"),
     /** Version utilisable par le moteur de rendu (ex. logo SVG converti en PNG). */
     renderKey: text("render_key"),
+    /** Personnage à plusieurs images : nom commun à toutes ses images. */
+    characterName: text("character_name"),
+    /** Pose de cette image du personnage : closed, half, open ou blink. */
+    pose: text("pose").$type<"closed" | "half" | "open" | "blink">(),
     analyzedAt: timestamp("analyzed_at", { withTimezone: true }),
     ...timestamps,
   },

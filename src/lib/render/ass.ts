@@ -70,8 +70,8 @@ export function buildAss(plan: EditPlan, opts: { watermarkText?: string } = {}):
       boxed ? 3 : 1,
       boxed ? 14 : Math.max(3, Math.round(s.sizePx / 14)),
       align,
-      layout.marginH,
-      layout.marginH,
+      layout.marginL,
+      layout.marginR,
       layout.marginV,
     ),
     style(

@@ -4,6 +4,10 @@ import { createReadStream } from "node:fs";
 import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { ai, type AssetSummary } from "@/lib/ai";
 import { planLimits } from "@/lib/billing/plans";
+import { voiceEnvelope } from "@/lib/character/mouth";
+import type { TalkingCharacter } from "@/lib/character/plan";
+import { type CharacterGroup, groupCharacters } from "@/lib/character/poses";
+import { prepareCharacter } from "@/lib/character/render";
 import { db, schema } from "@/lib/db";
 import type { Asset, BrandKit, Project } from "@/lib/db/schema";
 import { env } from "@/lib/env";
@@ -103,6 +107,47 @@ export async function candidateAssets(project: Project, kit: BrandKit | undefine
   return library.sort((a, b) => Number(linkedIds.includes(b.id)) - Number(linkedIds.includes(a.id)));
 }
 
+/**
+ * Personnages fournis pour cette vidéo (liés au projet), avec toutes leurs images (poses).
+ * Les poses sont ajoutées à `assets` pour être téléchargées au rendu.
+ */
+export async function projectCharacters(project: Project, assets: Asset[]): Promise<TalkingCharacter[]> {
+  const linked = await db()
+    .select({ assetId: schema.projectAssets.assetId })
+    .from(schema.projectAssets)
+    .where(eq(schema.projectAssets.projectId, project.id));
+  if (!linked.length) return [];
+  const all = await db()
+    .select()
+    .from(schema.assets)
+    .where(and(eq(schema.assets.userId, project.userId), eq(schema.assets.kind, "character")));
+  const linkedIds = new Set(linked.map((l) => l.assetId));
+  const groups = groupCharacters(all).filter((g) => g.ids.some((id) => linkedIds.has(id)));
+  const known = new Set(assets.map((a) => a.id));
+  for (const a of all) {
+    if (groups.some((g) => g.ids.includes(a.id)) && !known.has(a.id)) assets.push(a);
+  }
+  // Un seul personnage parle pour l'instant : celui qui a le plus d'images (bouche animée).
+  return groups
+    .sort((a, b) => Number(b.canTalk) - Number(a.canTalk) || b.ids.length - a.ids.length)
+    .slice(0, 1)
+    .map((group) => {
+      const main = all.find((a) => a.id === group.mainId);
+      return { group, aspect: main?.width && main.height ? main.width / main.height : 0.75 };
+    });
+}
+
+/**
+ * Ce que l'IA voit des fichiers : une seule entrée par personnage (pas une par pose), et rien
+ * pour le personnage qui parle, déjà incrusté. Moins de jetons, et pas de personnage en fond.
+ */
+export function aiVisibleAssets(assets: Asset[], speaking: TalkingCharacter[]): Asset[] {
+  const hidden = new Set(speaking.flatMap((c) => c.group.ids));
+  const groups: CharacterGroup[] = groupCharacters(assets);
+  for (const g of groups) for (const id of g.ids) if (id !== g.mainId) hidden.add(id);
+  return assets.filter((a) => !hidden.has(a.id));
+}
+
 const summary = (a: Asset): AssetSummary => ({
   id: a.id,
   kind: a.kind,
@@ -187,6 +232,12 @@ export async function doMontage(project: Project, job: MontageJob) {
     ]);
 
     const assets = await candidateAssets(project, kit);
+    const characters = await projectCharacters(project, assets);
+    const aiAssets = aiVisibleAssets(assets, characters);
+    // Volume de la voix image par image, pour faire bouger la bouche du personnage.
+    const envelope = characters.some((c) => c.group.canTalk || c.group.poses.blink)
+      ? voiceEnvelope(await readFile(renderVoice))
+      : null;
     const spans = sceneSpans(script.scenes, words);
     const sceneDurations = spans.map((s, i) => {
       const next = spans[i + 1];
@@ -199,7 +250,7 @@ export async function doMontage(project: Project, job: MontageJob) {
     let directions: Directions = await ai().directMontage({
       script,
       sceneDurations,
-      assets: assets.map(summary),
+      assets: aiAssets.map(summary),
       instruction: job.instruction,
       sceneId: job.sceneId,
       previous: project.directions ?? undefined,
@@ -234,6 +285,8 @@ export async function doMontage(project: Project, job: MontageJob) {
         assets: assets.map((a) => ({ id: a.id, kind: a.kind, durationSec: a.durationSec })),
         brand,
         watermark: limits.watermark,
+        characters,
+        voiceEnvelope: envelope,
       });
 
       const pre: QcCheck[] = [
@@ -356,7 +409,7 @@ export async function doMontage(project: Project, job: MontageJob) {
 
       const fails = post.filter((c) => c.status === "fail");
       if (!fails.length || attempt === MAX_ATTEMPTS) break;
-      const fixed = await autoFix(fails, directions, { script, sceneDurations, assets });
+      const fixed = await autoFix(fails, directions, { script, sceneDurations, assets: aiAssets });
       if (!fixed) break;
       directions = fixed;
     }
@@ -541,11 +594,20 @@ export async function renderPlan(
       }
     }
   }
+  // Personnages animés : images mises à la bonne taille et enchaînement des poses.
+  const characters = new Map<string, string>();
+  const files = new Map([...media].map(([id, m]) => [id, m.path]));
+  for (const [id, rig] of Object.entries(plan.characterRigs ?? {})) {
+    characters.set(
+      id,
+      await prepareCharacter(rig, files, path.join(opts.work, `character-${id}`), opts.scale),
+    );
+  }
   const assPath = path.join(opts.work, "subtitles.ass");
   await writeFile(assPath, buildAss(plan, { watermarkText: `Fait avec ${e.APP_NAME}` }));
   const args = buildFfmpegArgs(
     plan,
-    { assets: media, voicePath: opts.voiceFile, assPath, fontsDir },
+    { assets: media, voicePath: opts.voiceFile, assPath, fontsDir, characters },
     opts.out,
     {
       preset: "veryfast",

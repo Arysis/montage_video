@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { characterInputArgs, characterOverlay, mergeIntervals } from "@/lib/character/render";
 import type { EditPlan } from "@/lib/plan/schema";
 
 export type ResolvedMedia = {
@@ -7,6 +8,8 @@ export type ResolvedMedia = {
   voicePath: string | null;
   assPath: string;
   fontsDir: string;
+  /** Liste concat des poses de chaque personnage animé (par id de son image principale). */
+  characters?: Map<string, string>;
 };
 
 export type RenderOptions = { preset?: string; crf?: number; scale?: number };
@@ -78,6 +81,28 @@ export function buildFfmpegArgs(
 
   filters.push(`${sceneLabels.join("")}concat=n=${sceneLabels.length}:v=1:a=0[vcat]`);
   let videoOut = "vcat";
+
+  // Personnages animés : par-dessus le fond, sous le logo et les sous-titres.
+  Object.entries(plan.characterRigs ?? {}).forEach(([id, rig], k) => {
+    const list = media.characters?.get(id);
+    const visible = mergeIntervals(plan.scenes.filter((s) => s.character?.assetId === id));
+    if (!list || !visible.length) return;
+    args.push(...characterInputArgs(list));
+    filters.push(
+      ...characterOverlay({
+        rig,
+        inputIndex,
+        videoIn: videoOut,
+        out: `vchar${k}`,
+        label: `char${k}`,
+        fps,
+        scale,
+        visible,
+      }),
+    );
+    videoOut = `vchar${k}`;
+    inputIndex++;
+  });
 
   if (plan.logo) {
     const logo = media.assets.get(plan.logo.assetId);

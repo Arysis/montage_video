@@ -1,3 +1,4 @@
+import { buildCharacterRigs, type TalkingCharacter } from "@/lib/character/plan";
 import type { BrandColor } from "@/lib/db/schema";
 import type { Script } from "@/lib/script/schema";
 import type { WordTiming } from "@/lib/stt/types";
@@ -24,6 +25,10 @@ export type BuildInput = {
   assets: PlanAsset[];
   brand: BrandInput;
   watermark: boolean;
+  /** Personnage fourni pour la vidéo : il apparaît et parle (bouche animée s'il a plusieurs images). */
+  characters?: TalkingCharacter[];
+  /** Enveloppe de la voix (voir voiceEnvelope), pour animer la bouche. */
+  voiceEnvelope?: Float32Array | null;
 };
 
 export const DEFAULT_BRAND_COLORS = { primary: "#FF5A36", background: "#0E0F11", text: "#F2EFE9" };
@@ -68,6 +73,9 @@ export function buildPlan(input: BuildInput): EditPlan {
   if (spans[0]) spans[0].firstWord = 0;
 
   const assetById = new Map(assets.map((a) => [a.id, a]));
+  // Les images d'un personnage qui parle ne servent pas de fond : il est incrusté par-dessus.
+  const characterImages = new Set((input.characters ?? []).flatMap((c) => c.group.ids));
+  const speaker = input.characters?.[0]?.group.mainId ?? null;
   const palette = brandPalette(brand.colors);
   const shotMax = maxShotSeconds(directions.pace);
   const scenes: PlanScene[] = [];
@@ -80,7 +88,11 @@ export function buildPlan(input: BuildInput): EditPlan {
     const direction = directions.scenes.find((d) => d.sceneId === span.sceneId);
     const visualAssets = (direction?.assetIds ?? []).filter((id) => {
       const a = assetById.get(id);
-      return a && (a.kind === "video" || a.kind === "image" || a.kind === "character" || a.kind === "logo");
+      return (
+        a &&
+        !characterImages.has(a.id) &&
+        (a.kind === "video" || a.kind === "image" || a.kind === "character" || a.kind === "logo")
+      );
     });
     const sceneWords = words.slice(span.firstWord, span.lastWord + 1);
 
@@ -121,12 +133,27 @@ export function buildPlan(input: BuildInput): EditPlan {
             }
           : { type: "color", color: palette.background },
         overlayText: s === 0 ? (direction?.overlayText ?? null) : null,
+        character: speaker ? { assetId: speaker, talking: true } : null,
       });
     }
   });
 
   const musicAsset = directions.musicAssetId ? assetById.get(directions.musicAssetId) : undefined;
   const logoAsset = brand.logoAssetId ? assetById.get(brand.logoAssetId) : undefined;
+
+  const characterRigs = input.characters?.length
+    ? buildCharacterRigs({
+        format,
+        width,
+        height,
+        durationSec: timelineEnd,
+        scenes,
+        characters: input.characters,
+        envelope: input.voiceEnvelope ?? null,
+        words,
+        trimStart,
+      })
+    : undefined;
 
   return {
     version: 1,
@@ -176,5 +203,6 @@ export function buildPlan(input: BuildInput): EditPlan {
     },
     outro: null,
     watermark: input.watermark,
+    ...(characterRigs && Object.keys(characterRigs).length ? { characterRigs } : {}),
   };
 }

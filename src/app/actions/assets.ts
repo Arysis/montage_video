@@ -5,18 +5,21 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth/session";
 import { db, schema } from "@/lib/db";
+import { characterNameFrom, detectPose, POSES } from "@/lib/character/poses";
 import { storage } from "@/lib/storage";
 
 const updateSchema = z.object({
   kind: z.enum(["logo", "character", "video", "image", "music", "font"]).optional(),
   rights: z.enum(["own", "licensed", "free", "unknown"]).optional(),
+  characterName: z.string().trim().min(1).max(60).optional(),
+  pose: z.enum(POSES).optional(),
 });
 
 const IMAGE_KINDS = ["logo", "character", "image"];
 
 export async function updateAsset(
   assetId: string,
-  input: { kind?: string; rights?: string },
+  input: { kind?: string; rights?: string; characterName?: string; pose?: string },
 ): Promise<{ error?: string }> {
   const user = await requireUser();
   const parsed = updateSchema.safeParse(input);
@@ -26,14 +29,22 @@ export async function updateAsset(
     .from(schema.assets)
     .where(and(eq(schema.assets.id, assetId), eq(schema.assets.userId, user.id)));
   if (!asset) return { error: "Fichier introuvable." };
-  const set: { kind?: typeof asset.kind; rights?: typeof asset.rights } = {};
+  const set: Partial<Pick<typeof asset, "kind" | "rights" | "characterName" | "pose">> = {};
   if (parsed.data.kind && parsed.data.kind !== asset.kind) {
     // Seules les images peuvent changer de type (logo, personnage, image).
     if (!IMAGE_KINDS.includes(asset.kind) || !IMAGE_KINDS.includes(parsed.data.kind)) {
       return { error: "Ce type ne correspond pas au fichier." };
     }
     set.kind = parsed.data.kind;
+    if (set.kind === "character" && !asset.characterName) {
+      set.characterName = characterNameFrom(asset.name);
+      set.pose = detectPose(asset.name);
+    }
   }
+  if ((asset.kind === "character" || set.kind === "character") && parsed.data.characterName)
+    set.characterName = parsed.data.characterName;
+  if ((asset.kind === "character" || set.kind === "character") && parsed.data.pose)
+    set.pose = parsed.data.pose;
   if (parsed.data.rights) set.rights = parsed.data.rights;
   if (Object.keys(set).length)
     await db().update(schema.assets).set(set).where(eq(schema.assets.id, asset.id));

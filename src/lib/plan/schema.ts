@@ -36,6 +36,26 @@ export const planSceneSchema = z.object({
   spokenText: z.string(),
   visual: visualSchema,
   overlayText: z.string().max(80).nullable().default(null),
+  /** Personnage à l'écran dans cette scène (talking : il dit le texte de la scène). */
+  character: z
+    .object({ assetId: z.string().uuid(), talking: z.boolean() })
+    .nullable()
+    .default(null)
+    .optional(),
+});
+
+const poseIdSchema = z.string().uuid().nullable();
+
+/** Animation d'un personnage : ses images, sa place et sa bouche image par image (30 i/s). */
+export const characterRigSchema = z.object({
+  poses: z.object({ closed: z.string().uuid(), half: poseIdSchema, open: poseIdSchema, blink: poseIdSchema }),
+  box: z.object({
+    x: z.number().int(),
+    y: z.number().int(),
+    w: z.number().int().positive(),
+    h: z.number().int().positive(),
+  }),
+  mouth: z.string().regex(/^[chob]*$/),
 });
 
 export const wordSchema = z.object({
@@ -100,6 +120,8 @@ export const editPlanSchema = z
       })
       .nullable(),
     watermark: z.boolean().default(false),
+    /** Personnages animés, par id de leur image principale. */
+    characterRigs: z.record(z.string(), characterRigSchema).optional(),
   })
   .superRefine((plan, ctx) => {
     plan.scenes.forEach((s, i) => {
@@ -119,6 +141,9 @@ export function referencedAssetIds(plan: EditPlan): string[] {
   for (const s of plan.scenes) if (s.visual.type === "asset") ids.add(s.visual.assetId);
   if (plan.music) ids.add(plan.music.assetId);
   if (plan.logo) ids.add(plan.logo.assetId);
+  for (const rig of Object.values(plan.characterRigs ?? {})) {
+    for (const id of Object.values(rig.poses)) if (id) ids.add(id);
+  }
   return [...ids];
 }
 
