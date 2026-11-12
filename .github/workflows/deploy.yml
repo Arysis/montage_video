@@ -96,6 +96,8 @@ jobs:
 
       - name: Déployer
         if: steps.check.outputs.skip != 'true'
+        # « shell: bash » active pipefail : un échec du script sur le VPS fait échouer l'étape malgré le « | tee ».
+        shell: bash
         env:
           IMAGE: ${{ needs.image.outputs.image }}:${{ github.sha }}
           REGISTRY_USER: ${{ github.actor }}
