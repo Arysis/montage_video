@@ -71,3 +71,6 @@
     padding: 16px;
   }
 }
+.transition label {
+  white-space: nowrap;
+}
