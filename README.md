@@ -78,24 +78,29 @@ le contrôle qualité, publie (service simulé), puis exporte et supprime le com
 ## Mise en production
 
 La CI (`.github/workflows/ci.yml`) lance lint, types, tests unitaires, tests d'intégration, parcours navigateur et
-build Docker à chaque pull request. Après fusion sur `main`, `deploy.yml` publie l'image sur GHCR et déploie sur
-Fly.io si le secret `FLY_API_TOKEN` existe.
+build Docker à chaque pull request. Après fusion sur `main`, `deploy.yml` publie l'image sur GHCR puis la met en ligne
+sur le VPS par SSH (`deploy/vps/remote-deploy.sh`) :
 
-Sur Fly.io (`fly.toml`, région Paris) :
+- Docker est installé s'il manque, l'app est rangée dans `/opt/montage-video` (Postgres, worker, site sur
+  `127.0.0.1:3100`). Le mot de passe de la base et `APP_SECRET` sont générés une fois sur le serveur.
+- Le reverse proxy déjà présent (nginx, Caddy ou Apache) reçoit le sous-domaine, sans toucher aux autres sites, et
+  certbot crée le certificat HTTPS. Si rien n'écoute sur 80/443, un Caddy est lancé dans Docker.
 
-```bash
-fly apps create <nom>
-fly postgres create  &&  fly postgres attach <base>      # ou une base managée, DATABASE_URL
-fly secrets set APP_URL=https://<domaine> APP_SECRET=$(openssl rand -base64 48) \
-  ANTHROPIC_API_KEY=... DEEPGRAM_API_KEY=... AYRSHARE_API_KEY=... AYRSHARE_DOMAIN=... AYRSHARE_PRIVATE_KEY=... \
-  RESEND_API_KEY=... EMAIL_FROM="<Nom> <no-reply@domaine>" \
-  STRIPE_SECRET_KEY=... STRIPE_WEBHOOK_SECRET=... STRIPE_PRICE_CREATOR=... CREATOR_PRICE_EUR=... \
-  S3_ENDPOINT=... S3_BUCKET=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...
-fly deploy
-```
+À configurer dans GitHub (Settings > Secrets and variables > Actions) :
+
+| Nom | Type | Rôle |
+| --- | --- | --- |
+| `VPS_SSH_KEY` | secret, obligatoire | clé privée SSH autorisée sur le VPS |
+| `APP_ENV` | secret, facultatif | lignes `CLE=valeur` de prod (clés Anthropic, Deepgram, Stripe, S3...) ; sans lui, l'app tourne avec les services simulés |
+| `VPS_DOMAIN` | variable | sous-domaine, par défaut `montage.estebandimascio.fr` |
+| `VPS_HOST`, `VPS_USER`, `VPS_PORT` | variables | par défaut `72.60.95.129`, `root`, `22` |
+| `ACME_EMAIL` | variable | e-mail pour Let's Encrypt (facultatif) |
+
+Le sous-domaine doit avoir un enregistrement DNS A vers l'IP du VPS. Pour retirer les services simulés, ajoute par
+exemple `AI_PROVIDER=anthropic`, `ANTHROPIC_API_KEY=...` et `ALLOW_MOCK_IN_PRODUCTION=0` dans `APP_ENV`.
 
 Le démarrage échoue volontairement si une clé indispensable manque en production. Les services simulés sont refusés
-en production.
+en production, sauf avec `ALLOW_MOCK_IN_PRODUCTION=1` (réglage par défaut du VPS tant que `APP_ENV` est vide).
 
 Webhook Stripe : `https://<domaine>/api/stripe/webhook`, événements `checkout.session.completed`,
 `customer.subscription.updated`, `customer.subscription.deleted`.

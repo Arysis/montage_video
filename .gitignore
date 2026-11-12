@@ -9,3 +9,4 @@ test-results
 playwright-report
 *.tsbuildinfo
 next-env.d.ts
+deploy/vps/deploy.env
