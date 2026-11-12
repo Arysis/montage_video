@@ -221,7 +221,12 @@ for _ in $(seq 1 45); do
 done
 $SUDO docker compose ps
 if [ "$ok" != 1 ]; then
-  $SUDO docker compose logs --tail 80 web worker
+  logs="$($SUDO docker compose logs --tail 80 web worker 2>&1 || true)"
+  echo "$logs"
+  missing="$(echo "$logs" | grep -o 'Variables manquantes en production : .*' | tail -1 || true)"
+  if [ -n "$missing" ]; then
+    fail "$missing. Ajoute ces clés dans le secret GitHub APP_ENV, ou retire la ligne *_PROVIDER du service correspondant pour le garder simulé."
+  fi
   fail "L'app ne répond pas sur http://127.0.0.1:$WEB_PORT/api/health"
 fi
 echo "L'app répond."

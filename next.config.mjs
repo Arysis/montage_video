@@ -1,8 +1,9 @@
-import type { NextConfig } from "next";
+// Fichier .mjs (et non .ts) : en production, Next le charge sans TypeScript, retiré de l'image.
 
 const dev = process.env.NODE_ENV !== "production";
 
-function origin(url: string | undefined): string {
+/** @param {string | undefined} url */
+function origin(url) {
   try {
     return url ? new URL(url).origin : "";
   } catch {
@@ -34,7 +35,8 @@ const csp = [
   ...(dev ? [] : ["upgrade-insecure-requests"]),
 ].join("; ");
 
-const nextConfig: NextConfig = {
+/** @type {import("next").NextConfig} */
+const nextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
   serverExternalPackages: ["@node-rs/argon2", "sharp", "pg-boss", "pg"],
