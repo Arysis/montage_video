@@ -19,17 +19,53 @@ export const CHAR_WIDTH_RATIO = 0.56;
 export function subtitleLayout(plan: EditPlan) {
   const zone = safeZone(plan);
   const marginH = Math.round(Math.max(zone.left, zone.right) + 20);
-  const availableWidth = plan.width - 2 * marginH;
-  const maxChars = Math.max(10, Math.floor(availableWidth / (plan.subtitles.sizePx * CHAR_WIDTH_RATIO)));
+  let marginR = marginH;
   const lineHeight = Math.round(plan.subtitles.sizePx * 1.25);
   const blockHeight = lineHeight * 2 + 24;
-  const marginV =
+  let marginV =
     plan.subtitles.position === "bottom"
       ? Math.round(zone.bottom + 20)
       : Math.round(plan.height / 2 - blockHeight / 2);
+  const rectTop = () =>
+    plan.subtitles.position === "bottom" ? plan.height - marginV - blockHeight : marginV;
+
+  // Un personnage incrusté en bas : les sous-titres l'évitent (à côté s'il y a la place, sinon au-dessus).
+  const box = characterArea(plan);
+  if (box && rectTop() + blockHeight > box.y) {
+    const besideR = Math.round(plan.width - box.x + 20);
+    if (box.x > plan.width / 2 && plan.width - marginH - besideR >= plan.width * 0.5) {
+      marginR = Math.max(marginR, besideR);
+    } else if (plan.subtitles.position === "bottom") {
+      marginV = Math.max(marginV, Math.round(plan.height - box.y + 20));
+    }
+  }
+  const availableWidth = plan.width - marginH - marginR;
+  const maxChars = Math.max(10, Math.floor(availableWidth / (plan.subtitles.sizePx * CHAR_WIDTH_RATIO)));
   // Rectangle occupé par les sous-titres (deux lignes au plus), pour le test de lisibilité.
-  const top = plan.subtitles.position === "bottom" ? plan.height - marginV - blockHeight : marginV;
-  return { marginH, marginV, availableWidth, maxChars, rect: { top, bottom: top + blockHeight } };
+  const top = rectTop();
+  return {
+    marginH,
+    marginL: marginH,
+    marginR,
+    marginV,
+    availableWidth,
+    maxChars,
+    rect: { top, bottom: top + blockHeight },
+  };
+}
+
+/** Zone occupée par les personnages incrustés (leur boîte englobante), ou null. */
+export function characterArea(plan: EditPlan): { x: number; y: number; w: number; h: number } | null {
+  const shown = new Set(plan.scenes.map((s) => s.character?.assetId).filter(Boolean));
+  const boxes = Object.entries(plan.characterRigs ?? {})
+    .filter(([id]) => shown.has(id))
+    .map(([, r]) => r.box);
+  if (!boxes.length) return null;
+  const x = Math.min(...boxes.map((b) => b.x));
+  const y = Math.min(...boxes.map((b) => b.y));
+  const r = Math.max(...boxes.map((b) => b.x + b.w));
+  const bottom = Math.max(...boxes.map((b) => b.y + b.h));
+  return { x, y, w: r - x, h: bottom - y };
 }
 
 /**

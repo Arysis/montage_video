@@ -162,7 +162,8 @@ export async function analyzeAsset(assetId: string): Promise<void> {
     if (jpeg) {
       update.thumbKey = `${asset.storageKey}.thumb.jpg`;
       await storage().put(update.thumbKey, jpeg, "image/jpeg");
-      if (asset.kind !== "font") {
+      // Les autres poses d'un personnage (bouche ouverte…) ne servent qu'à l'animer : pas de description IA.
+      if (asset.kind !== "font" && !(asset.kind === "character" && asset.pose && asset.pose !== "closed")) {
         update.description = await ai()
           .describeImage({ jpeg, name: asset.name, kind: asset.kind })
           .catch(() => null);

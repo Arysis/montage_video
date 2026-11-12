@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { classifyUpload, sniffMatches } from "@/lib/assets";
+import { characterNameFrom, detectPose } from "@/lib/character/poses";
 import { db, schema } from "@/lib/db";
 import { env } from "@/lib/env";
 import { apiUser, BadContentError, json, limitedBody, sameOrigin, TooLargeError } from "@/lib/http";
@@ -50,6 +51,8 @@ export async function PUT(req: Request) {
         sizeBytes: size,
         storageKey: key,
         rights: rights === "licensed" || rights === "free" || rights === "unknown" ? rights : "own",
+        // Un personnage peut avoir plusieurs images (bouche fermée, ouverte…) : on les regroupe par nom.
+        ...(kind === "character" ? { characterName: characterNameFrom(name), pose: detectPose(name) } : {}),
       })
       .returning();
     await enqueue(QUEUES.analyzeAsset, { assetId: id });
