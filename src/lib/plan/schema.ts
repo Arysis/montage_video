@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BACKGROUND_STYLES } from "@/lib/script/schema";
 
 /**
  * Le plan de montage : un JSON qui décrit la vidéo scène par scène.
@@ -15,19 +16,42 @@ export type VideoFormat = keyof typeof FORMATS;
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Couleur hexadécimale attendue (#RRGGBB)");
 
+export const MOTIONS = ["none", "zoom-in", "zoom-out", "pan-left", "pan-right"] as const;
+export type Motion = (typeof MOTIONS)[number];
+
 export const visualSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("asset"),
     assetId: z.string().uuid(),
     /** Pour une vidéo : à partir de quelle seconde du rush on prend le plan. */
     sourceStart: z.number().min(0).default(0),
-    motion: z.enum(["none", "zoom-in", "zoom-out"]).default("none"),
+    motion: z.enum(MOTIONS).default("none"),
+    /** cover : remplit l'écran ; contain : en entier, sur un fond flou du même fichier. */
+    fit: z.enum(["cover", "contain"]).default("cover"),
   }),
   z.object({
     type: z.literal("color"),
     color: hex,
   }),
+  z.object({
+    /** Fond animé calculé par FFmpeg aux couleurs de la marque. */
+    type: z.literal("generated"),
+    style: z.enum(BACKGROUND_STYLES),
+    colors: z.array(hex).min(2).max(4),
+    seed: z.number().int().min(0),
+  }),
 ]);
+
+export const TRANSITION_TYPES = [
+  "cut",
+  "fade",
+  "slideleft",
+  "slideup",
+  "zoomin",
+  "fadewhite",
+  "wipeleft",
+  "hblur",
+] as const;
 
 export const planSceneSchema = z.object({
   id: z.string().min(1),
@@ -36,6 +60,15 @@ export const planSceneSchema = z.object({
   spokenText: z.string(),
   visual: visualSchema,
   overlayText: z.string().max(80).nullable().default(null),
+  /** Transition vers le plan suivant (chevauche le début du plan suivant). */
+  transition: z
+    .object({ type: z.enum(TRANSITION_TYPES), duration: z.number().min(0).max(1) })
+    .default({ type: "cut", duration: 0 }),
+  /** Zooms chocs : secondes depuis le début du plan. */
+  punches: z.array(z.number().min(0)).max(6).default([]),
+  shake: z.boolean().default(false),
+  /** Personnage incrusté par-dessus le fond (animé par le module personnage s'il parle). */
+  character: z.object({ assetId: z.string().uuid(), talking: z.boolean() }).nullable().default(null),
 });
 
 export const wordSchema = z.object({
@@ -69,6 +102,8 @@ export const editPlanSchema = z
       highlightColor: hex,
       boxColor: hex,
       words: z.array(wordSchema),
+      /** Mots forts choisis dans le script, à mettre en avant. */
+      emphasis: z.array(z.string()).default([]),
     }),
     music: z
       .object({
@@ -116,7 +151,10 @@ export type PlanVisual = z.infer<typeof visualSchema>;
 /** Liste des assets référencés par un plan (pour vérifier qu'ils existent et leurs droits). */
 export function referencedAssetIds(plan: EditPlan): string[] {
   const ids = new Set<string>();
-  for (const s of plan.scenes) if (s.visual.type === "asset") ids.add(s.visual.assetId);
+  for (const s of plan.scenes) {
+    if (s.visual.type === "asset") ids.add(s.visual.assetId);
+    if (s.character) ids.add(s.character.assetId);
+  }
   if (plan.music) ids.add(plan.music.assetId);
   if (plan.logo) ids.add(plan.logo.assetId);
   return [...ids];

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { EditPlan } from "@/lib/plan/schema";
+import type { EditPlan, Motion, PlanScene } from "@/lib/plan/schema";
 
 export type ResolvedMedia = {
   /** Chemin local de chaque asset du plan (vidéo, image, musique, logo en PNG). */
@@ -13,6 +13,134 @@ export type RenderOptions = { preset?: string; crf?: number; scale?: number };
 
 const hex0x = (hex: string) => `0x${hex.slice(1)}`;
 const filterPath = (p: string) => p.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
+
+/** Mélange deux couleurs #RRGGBB (t = 0 : a, t = 1 : b). */
+export function mixHex(a: string, b: string, t: number): string {
+  const ch = (hex: string, i: number) => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16);
+  return `#${[0, 1, 2]
+    .map((i) =>
+      Math.round(ch(a, i) * (1 - t) + ch(b, i) * t)
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
+}
+
+type Generated = Extract<PlanScene["visual"], { type: "generated" }>;
+
+/**
+ * Fond animé aux couleurs de la marque, calculé par FFmpeg (aucun fichier, aucun appel à l'IA).
+ * Calculé en basse définition puis agrandi : flou naturel et rendu rapide.
+ */
+export function generatedBackground(
+  v: Generated,
+  o: { W: number; H: number; fps: number; dur: number; label: string },
+): string[] {
+  const [primary, background, accent = primary] = v.colors as [string, string, string?];
+  const w = Math.max(64, Math.round(o.W / 4));
+  const h = Math.max(64, Math.round(o.H / 4));
+  const d = o.dur.toFixed(3);
+  const common = `s=${w}x${h}:rate=${o.fps}:duration=${d}:seed=${v.seed}`;
+  const up = `scale=${o.W}:${o.H}:flags=bicubic`;
+  const c = (hex: string) => hex0x(hex);
+  switch (v.style) {
+    case "nuit":
+      return [
+        `gradients=${common}:c0=${c(background)}:c1=${c(mixHex(background, primary, 0.28))}:c2=${c(background)}:c3=${c(mixHex(background, accent, 0.18))}:nb_colors=4:speed=0.015,gblur=sigma=28,${up},noise=c0s=7:allf=t,vignette=PI/5,format=yuv420p[${o.label}]`,
+      ];
+    case "degrade":
+      return [
+        `gradients=${common}:c0=${c(primary)}:c1=${c(mixHex(primary, accent, 0.5))}:c2=${c(accent)}:nb_colors=3:speed=0.02,gblur=sigma=12,${up},noise=c0s=5:allf=t,format=yuv420p[${o.label}]`,
+      ];
+    case "particules":
+      return [
+        `gradients=${common}:c0=${c(background)}:c1=${c(mixHex(background, primary, 0.22))}:c2=${c(background)}:nb_colors=3:speed=0.015,gblur=sigma=20,${up},format=yuv420p[${o.label}g]`,
+        `color=c=${c(mixHex(primary, "#FFFFFF", 0.2))}:s=${o.W}x${o.H}:r=${o.fps}:d=${d},format=yuva420p[${o.label}c]`,
+        `life=s=${Math.round(w / 2.5)}x${Math.round(h / 2.5)}:mold=12:rate=${o.fps}:ratio=0.06:seed=${v.seed}:death_color=black:life_color=white:mold_color=0x404040,trim=duration=${d},gblur=sigma=2.5,${up},format=gray[${o.label}m]`,
+        `[${o.label}c][${o.label}m]alphamerge[${o.label}p]`,
+        `[${o.label}g][${o.label}p]overlay=shortest=1,vignette=PI/5,format=yuv420p[${o.label}]`,
+      ];
+    default:
+      return [
+        `gradients=${common}:c0=${c(primary)}:c1=${c(background)}:c2=${c(accent)}:c3=${c(background)}:nb_colors=4:speed=0.025,gblur=sigma=45,${up},noise=c0s=6:allf=t,format=yuv420p[${o.label}]`,
+      ];
+  }
+}
+
+/** Expressions zoompan : mouvement lent, zooms chocs et secousse. */
+export function cameraExpressions(
+  motion: Motion,
+  frames: number,
+  fps: number,
+  punches: number[],
+  shake: boolean,
+): { z: string; x: string; y: string } | null {
+  if (motion === "none" && !punches.length && !shake) return null;
+  const F = Math.max(1, frames);
+  let z =
+    motion === "zoom-in"
+      ? `(1+0.12*on/${F})`
+      : motion === "zoom-out"
+        ? `(1.12-0.12*on/${F})`
+        : motion === "pan-left" || motion === "pan-right"
+          ? "1.15"
+          : "1";
+  const hold = Math.round(0.5 * fps);
+  if (punches.length) {
+    const terms = punches.map((p) => {
+      const a = Math.round(p * fps);
+      return `between(on,${a},${a + hold})`;
+    });
+    z = `${z}*(1+0.14*min(1,${terms.join("+")}))`;
+  }
+  const shakeFrames = Math.round(0.4 * fps);
+  if (shake) z = `${z}*(1+0.06*lt(on,${shakeFrames}))`;
+  let x =
+    motion === "pan-left"
+      ? `(iw-iw/zoom)*(1-on/${F})`
+      : motion === "pan-right"
+        ? `(iw-iw/zoom)*on/${F}`
+        : "iw/2-(iw/zoom/2)";
+  let y = "ih/2-(ih/zoom/2)";
+  if (shake) {
+    x = `${x}+lt(on,${shakeFrames})*sin(on*2.7)*iw*0.012`;
+    y = `${y}+lt(on,${shakeFrames})*cos(on*3.1)*ih*0.008`;
+  }
+  return { z, x, y };
+}
+
+export type OverlayParts = { args: string[]; filters: string[]; label: string; inputs: number };
+
+/**
+ * Incrustation du personnage de la scène (image fixe, centrée en bas, sous les sous-titres).
+ * Point d'extension : le module « personnage qui parle » remplace ce rendu par une bouche animée.
+ */
+export function characterOverlay(p: {
+  scene: PlanScene;
+  index: number;
+  baseLabel: string;
+  nextInput: number;
+  media: ResolvedMedia;
+  W: number;
+  H: number;
+  fps: number;
+  clipDur: number;
+}): OverlayParts | null {
+  if (!p.scene.character) return null;
+  const file = p.media.assets.get(p.scene.character.assetId);
+  if (!file) return null;
+  const h = Math.round((p.H * 0.6) / 2) * 2;
+  const label = `ch${p.index}`;
+  return {
+    args: ["-loop", "1", "-framerate", String(p.fps), "-t", p.clipDur.toFixed(3), "-i", file.path],
+    filters: [
+      `[${p.nextInput}:v]scale=-2:${h},format=rgba[${label}i]`,
+      `[${p.baseLabel}][${label}i]overlay=x=(W-w)/2:y=H-h-${Math.round(p.H * 0.08)}:shortest=1,format=yuv420p,settb=1/${p.fps}[${label}]`,
+    ],
+    label,
+    inputs: 1,
+  };
+}
 
 /**
  * Traduit un plan de montage en une commande FFmpeg unique (filter_complex).
@@ -31,53 +159,99 @@ export function buildFfmpegArgs(
   const args: string[] = ["-y", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats"];
   const filters: string[] = [];
   let inputIndex = 0;
-  const sceneLabels: string[] = [];
+  const frameAt = (t: number) => Math.round(t * fps);
 
+  const clips: { label: string; frames: number }[] = [];
   plan.scenes.forEach((scene, k) => {
-    const dur = scene.end - scene.start;
-    const frames = Math.max(1, Math.round(dur * fps));
-    const label = `v${k}`;
-    if (scene.visual.type === "color") {
-      args.push(
-        "-f",
-        "lavfi",
-        "-i",
-        `color=c=${hex0x(scene.visual.color)}:s=${W}x${H}:r=${fps}:d=${dur.toFixed(3)}`,
-      );
+    const tail = scene.transition.type === "cut" ? 0 : frameAt(scene.transition.duration);
+    const frames = Math.max(1, frameAt(scene.end) - frameAt(scene.start) + tail);
+    const clipDur = frames / fps;
+    const base = `b${k}`;
+    const finish = `fps=${fps},format=yuv420p,tpad=stop_mode=clone:stop_duration=${clipDur.toFixed(3)},trim=end_frame=${frames},setpts=PTS-STARTPTS,settb=1/${fps}`;
+    const visual = scene.visual;
+    if (visual.type === "color") {
       filters.push(
-        `[${inputIndex}:v]format=yuv420p,setsar=1,trim=end_frame=${frames},setpts=PTS-STARTPTS[${label}]`,
+        `color=c=${hex0x(visual.color)}:s=${W}x${H}:r=${fps}:d=${clipDur.toFixed(3)},setsar=1,${finish}[${base}]`,
       );
+    } else if (visual.type === "generated") {
+      filters.push(...generatedBackground(visual, { W, H, fps, dur: clipDur, label: `${base}g` }));
+      filters.push(`[${base}g]setsar=1,${finish}[${base}]`);
     } else {
-      const asset = media.assets.get(scene.visual.assetId);
+      const asset = media.assets.get(visual.assetId);
       if (!asset) throw new Error(`Asset absent pour la scène ${scene.id}`);
       const isVideo = asset.kind === "video";
       if (isVideo) {
-        args.push("-ss", scene.visual.sourceStart.toFixed(3), "-t", (dur + 0.5).toFixed(3), "-i", asset.path);
+        args.push("-ss", visual.sourceStart.toFixed(3), "-t", (clipDur + 0.5).toFixed(3), "-i", asset.path);
       } else {
         args.push("-i", asset.path);
       }
-      const motion = scene.visual.motion;
-      const zoomExpr =
-        motion === "zoom-in" ? `1+0.12*on/${frames}` : motion === "zoom-out" ? `1.12-0.12*on/${frames}` : "1";
-      // Les images et les zooms sont calculés en double résolution pour éviter les saccades.
-      const k = !isVideo || motion !== "none" ? 2 : 1;
-      const base = `[${inputIndex}:v]scale=${W * k}:${H * k}:force_original_aspect_ratio=increase,crop=${W * k}:${H * k},setsar=1`;
-      const zoom = isVideo
-        ? motion === "none"
+      const cam = cameraExpressions(visual.motion, frames, fps, scene.punches, scene.shake);
+      // Les images et les mouvements sont calculés en double résolution pour éviter les saccades.
+      const m = !isVideo || cam ? 2 : 1;
+      const w2 = W * m;
+      const h2 = H * m;
+      let chain: string;
+      if (visual.fit === "contain") {
+        // Le fichier en entier, posé sur une version floue et assombrie de lui-même.
+        filters.push(`[${inputIndex}:v]setsar=1,split=2[${base}a][${base}f]`);
+        filters.push(
+          `[${base}a]scale=${Math.round(w2 / 8)}:${Math.round(h2 / 8)}:force_original_aspect_ratio=increase,crop=${Math.round(w2 / 8)}:${Math.round(h2 / 8)},gblur=sigma=6,scale=${w2}:${h2},eq=brightness=-0.12:saturation=1.2[${base}bl]`,
+        );
+        filters.push(`[${base}f]scale=${w2}:${h2}:force_original_aspect_ratio=decrease[${base}fg]`);
+        filters.push(`[${base}bl][${base}fg]overlay=x=(W-w)/2:y=(H-h)/2,setsar=1[${base}c]`);
+        chain = `[${base}c]`;
+      } else {
+        chain = `[${inputIndex}:v]scale=${w2}:${h2}:force_original_aspect_ratio=increase,crop=${w2}:${h2},setsar=1,`;
+      }
+      const zoom = cam
+        ? isVideo
+          ? `fps=${fps},zoompan=z='${cam.z}':x='${cam.x}':y='${cam.y}':d=1:s=${W}x${H}:fps=${fps}`
+          : `zoompan=z='${cam.z}':x='${cam.x}':y='${cam.y}':d=${frames}:s=${W}x${H}:fps=${fps}`
+        : isVideo
           ? `fps=${fps}`
-          : `fps=${fps},zoompan=z='${zoomExpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=${fps}`
-        : `zoompan=z='${zoomExpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${W}x${H}:fps=${fps}`;
+          : `scale=${W}:${H}`;
       // tpad clone : si le rush est plus court que le plan, on fige la dernière image au lieu d'un trou.
-      filters.push(
-        `${base},${zoom},format=yuv420p,tpad=stop_mode=clone:stop_duration=${dur.toFixed(3)},trim=end_frame=${frames},setpts=PTS-STARTPTS[${label}]`,
-      );
+      filters.push(`${chain}${zoom},${finish}[${base}]`);
+      inputIndex++;
     }
-    sceneLabels.push(`[${label}]`);
-    inputIndex++;
+    let label = base;
+    const overlay = characterOverlay({
+      scene,
+      index: k,
+      baseLabel: base,
+      nextInput: inputIndex,
+      media,
+      W,
+      H,
+      fps,
+      clipDur,
+    });
+    if (overlay) {
+      args.push(...overlay.args);
+      filters.push(...overlay.filters);
+      inputIndex += overlay.inputs;
+      label = overlay.label;
+    }
+    clips.push({ label, frames });
   });
 
-  filters.push(`${sceneLabels.join("")}concat=n=${sceneLabels.length}:v=1:a=0[vcat]`);
-  let videoOut = "vcat";
+  // Assemblage : coupe franche (concat) ou transition (xfade) qui démarre pile au début du plan suivant.
+  let current = clips[0]!.label;
+  for (let k = 1; k < clips.length; k++) {
+    const prev = plan.scenes[k - 1]!;
+    const out = `j${k}`;
+    if (prev.transition.type === "cut") {
+      filters.push(`[${current}][${clips[k]!.label}]concat=n=2:v=1:a=0,settb=1/${fps}[${out}]`);
+    } else {
+      const offset = frameAt(plan.scenes[k]!.start) / fps;
+      const duration = frameAt(prev.transition.duration) / fps;
+      filters.push(
+        `[${current}][${clips[k]!.label}]xfade=transition=${prev.transition.type}:duration=${duration.toFixed(3)}:offset=${offset.toFixed(3)},settb=1/${fps}[${out}]`,
+      );
+    }
+    current = out;
+  }
+  let videoOut = current;
 
   if (plan.logo) {
     const logo = media.assets.get(plan.logo.assetId);

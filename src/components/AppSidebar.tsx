@@ -23,9 +23,10 @@ const MAIN = [
 
 const STEPS = [
   { key: "idee", n: 1, label: "Idée et fichiers" },
-  { key: "prompteur", n: 2, label: "Prompteur" },
-  { key: "montage", n: 3, label: "Montage" },
-  { key: "publication", n: 4, label: "Publication" },
+  { key: "script", n: 2, label: "Script" },
+  { key: "prompteur", n: 3, label: "Voix au prompteur" },
+  { key: "montage", n: 4, label: "Montage" },
+  { key: "publication", n: 5, label: "Publication" },
 ];
 
 export function AppSidebar({ appName, firstName, initials, planLabel, lastProject }: Props) {

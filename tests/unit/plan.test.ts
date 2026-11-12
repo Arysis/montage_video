@@ -54,10 +54,89 @@ describe("plan de montage", () => {
     }
   });
 
-  it("utilise un fond de couleur quand la scène n'a pas de visuel", () => {
+  it("utilise un fond animé généré quand la scène n'a pas de visuel", () => {
     const plan = samplePlan();
     const last = plan.scenes[plan.scenes.length - 1]!;
-    expect(last.visual).toEqual({ type: "color", color: "#0E0F11" });
+    expect(last.visual).toMatchObject({ type: "generated", style: "aurore" });
+    expect(last.visual.type === "generated" && last.visual.colors[0]).toBe("#FF5A36");
+  });
+
+  it("suit le script : transitions entre scènes, coupes franches dans une scène", () => {
+    const plan = samplePlan();
+    const lastOf = (id: string) => plan.scenes.filter((s) => s.id.split(".")[0] === id).at(-1)!;
+    expect(lastOf("s1").transition.type).toBe("fadewhite");
+    expect(lastOf("s3").transition.type).toBe("fade");
+    expect(lastOf("s2").transition.type).toBe("cut");
+    expect(plan.scenes.at(-1)!.transition.type).toBe("cut");
+    for (const [i, s] of plan.scenes.entries()) {
+      const next = plan.scenes[i + 1];
+      if (next && s.transition.type !== "cut") {
+        expect(s.transition.duration).toBeLessThanOrEqual((next.end - next.start) * 0.4 + 0.01);
+      }
+    }
+  });
+
+  it("place les zooms chocs sur les mots forts et la secousse à l'entrée", () => {
+    const plan = samplePlan({
+      directions: {
+        ...directions,
+        scenes: directions.scenes.map((d) =>
+          d.sceneId === "s2" ? { ...d, effects: ["punch", "shake"], emphasis: ["problème"] } : d,
+        ),
+      },
+    });
+    const s2 = plan.scenes.filter((s) => s.id.startsWith("s2"));
+    const punched = s2.find((s) => s.punches.length)!;
+    expect(punched).toBeDefined();
+    // « problème » est le 2e mot de la scène.
+    expect(punched.start + punched.punches[0]!).toBeGreaterThan(punched.start);
+    expect(s2[0]!.shake).toBe(true);
+    expect(plan.subtitles.emphasis).toContain("problème");
+  });
+
+  it("varie le mouvement de caméra d'un plan à l'autre", () => {
+    const plan = samplePlan({
+      directions: {
+        ...directions,
+        pace: "fast",
+        scenes: directions.scenes.map((d) => ({
+          ...d,
+          assetIds: [IDS["img-1"]],
+          effects: ["zoom-in", "pan"],
+        })),
+      },
+    });
+    const motions = plan.scenes.map((s) => (s.visual.type === "asset" ? s.visual.motion : null));
+    expect(new Set(motions).size).toBeGreaterThan(2);
+  });
+
+  it("incruste le personnage du script sur un fond généré", () => {
+    const character = "66666666-6666-4666-8666-666666666666";
+    const plan = samplePlan({
+      assets: [...assets, { id: character, kind: "character", durationSec: null }],
+      directions: {
+        ...directions,
+        scenes: directions.scenes.map((d) =>
+          d.sceneId === "s4" ? { ...d, assetIds: [character], character: null } : d,
+        ),
+      },
+    });
+    const s4 = plan.scenes.find((s) => s.id === "s4")!;
+    expect(s4.visual.type).toBe("generated");
+    expect(s4.character).toEqual({ assetId: character, talking: false });
+    expect(referencedAssetIds(plan)).toContain(character);
+  });
+
+  it("montre en entier, sur fond flou, une photo qui n'a pas le cadre de la vidéo", () => {
+    const plan = samplePlan({
+      assets: assets.map((a) => (a.id === IDS["img-1"] ? { ...a, width: 1920, height: 1080 } : a)),
+    });
+    const img = plan.scenes.find((s) => s.visual.type === "asset" && s.visual.assetId === IDS["img-1"])!;
+    expect(img.visual.type === "asset" && img.visual.fit).toBe("contain");
+  });
+
+  it("coupe les sous-titres si le script le demande", () => {
+    expect(samplePlan({ directions: { ...directions, subtitles: false } }).subtitles.enabled).toBe(false);
   });
 
   it("place le logo et la musique du Brand Kit", () => {
@@ -74,7 +153,7 @@ describe("plan de montage", () => {
     const plan = samplePlan({
       directions: { ...directions, scenes: directions.scenes.map((s) => ({ ...s, assetIds: ["inconnu"] })) },
     });
-    expect(plan.scenes.every((s) => s.visual.type === "color")).toBe(true);
+    expect(plan.scenes.every((s) => s.visual.type === "generated")).toBe(true);
   });
 
   it("refuse une prise sans mot", () => {
@@ -92,7 +171,13 @@ describe("plan de montage", () => {
   });
 
   it("lit la palette par nom, avec des valeurs par défaut", () => {
-    expect(brandPalette([])).toEqual({ primary: "#FF5A36", background: "#0E0F11", text: "#F2EFE9" });
+    expect(brandPalette([])).toEqual({
+      primary: "#FF5A36",
+      background: "#0E0F11",
+      text: "#F2EFE9",
+      accent: "#3DDC97",
+    });
+    expect(brandPalette([{ name: "Bleu", hex: "#0000FF" }]).accent).toBe("#0000FF");
     expect(brandPalette([{ name: "primary", hex: "#112233" }]).primary).toBe("#112233");
   });
 });

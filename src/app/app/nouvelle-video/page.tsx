@@ -22,7 +22,7 @@ export default async function NewVideoPage({
   const preselected = library.filter((a) => a.id === fichier);
   return (
     <>
-      <TopBar eyebrow="Étape 1 sur 4" title="Nouvelle vidéo" />
+      <TopBar eyebrow="Étape 1 sur 5" title="Nouvelle vidéo" />
       <NewVideoForm
         library={library}
         preselected={preselected}

@@ -7,9 +7,8 @@ import { planLimits } from "@/lib/billing/plans";
 import { db, schema } from "@/lib/db";
 import type { Asset, BrandKit, Project } from "@/lib/db/schema";
 import { env } from "@/lib/env";
-import { sceneSpans } from "@/lib/plan/align";
 import { brandPalette, buildPlan, type BrandInput } from "@/lib/plan/build";
-import type { Directions } from "@/lib/plan/directions";
+import { type Directions, directionsFromScript } from "@/lib/plan/directions";
 import { type EditPlan, referencedAssetIds } from "@/lib/plan/schema";
 import {
   analyzeAudio,
@@ -32,7 +31,7 @@ import { checkPlatforms, checkReadability, contrastRatio } from "@/lib/qc/rules"
 import { blocksPublication, type QcCheck, type QcReport } from "@/lib/qc/types";
 import { buildAss } from "@/lib/render/ass";
 import { buildFfmpegArgs, run } from "@/lib/render/ffmpeg";
-import type { Script } from "@/lib/script/schema";
+import { normalizeScript, type Script } from "@/lib/script/schema";
 import { storage } from "@/lib/storage";
 import { isRealStt, stt } from "@/lib/stt";
 import type { MontageJob } from "@/lib/jobs";
@@ -139,7 +138,7 @@ export async function doMontage(project: Project, job: MontageJob) {
   const e = env();
   if (!project.script) throw new Error("Le script n'est pas encore écrit.");
   if (!project.selectedTakeId) throw new Error("Aucune prise de voix retenue.");
-  const script: Script = project.script;
+  let script: Script = normalizeScript(project.script);
   const [user] = await db().select().from(schema.users).where(eq(schema.users.id, project.userId));
   if (!user) return;
   const [take] = await db().select().from(schema.takes).where(eq(schema.takes.id, project.selectedTakeId));
@@ -187,23 +186,20 @@ export async function doMontage(project: Project, job: MontageJob) {
     ]);
 
     const assets = await candidateAssets(project, kit);
-    const spans = sceneSpans(script.scenes, words);
-    const sceneDurations = spans.map((s, i) => {
-      const next = spans[i + 1];
-      const start = words[s.firstWord]?.start ?? 0;
-      const end = next ? (words[next.firstWord]?.start ?? start) : (words[words.length - 1]?.end ?? start);
-      return { sceneId: s.sceneId, durationSec: Math.max(0, end - start) };
-    });
 
-    await setProgress(project.id, 10, "L'IA choisit les plans");
-    let directions: Directions = await ai().directMontage({
-      script,
-      sceneDurations,
-      assets: assets.map(summary),
-      instruction: job.instruction,
-      sceneId: job.sceneId,
-      previous: project.directions ?? undefined,
-    });
+    // Le montage suit le script détaillé validé : aucun appel à l'IA, sauf si le créateur
+    // demande une correction (et alors seulement pour la scène concernée).
+    if (job.instruction) {
+      await setProgress(project.id, 10, "L'IA applique ta correction");
+      script = await ai().reviseScript({
+        script,
+        assets: assets.map(summary),
+        instruction: job.instruction,
+        sceneId: job.sceneId,
+      });
+      await db().update(schema.projects).set({ script }).where(eq(schema.projects.id, project.id));
+    }
+    let directions: Directions = directionsFromScript(script);
 
     const qcAssets: QcAsset[] = assets.map((a) => ({
       id: a.id,
@@ -231,7 +227,13 @@ export async function doMontage(project: Project, job: MontageJob) {
         script,
         take: { id: take.id, durationSec: take.durationSec, words },
         directions,
-        assets: assets.map((a) => ({ id: a.id, kind: a.kind, durationSec: a.durationSec })),
+        assets: assets.map((a) => ({
+          id: a.id,
+          kind: a.kind,
+          durationSec: a.durationSec,
+          width: a.width,
+          height: a.height,
+        })),
         brand,
         watermark: limits.watermark,
       });
@@ -311,7 +313,8 @@ export async function doMontage(project: Project, job: MontageJob) {
           .transcribe({ filePath: out, mime: "video/mp4", durationSec: probed.durationSec })
           .catch(() => null);
       }
-      const review = await aiReview(plan, script, out, work);
+      // La relecture par l'IA (images) ne tourne qu'une fois : c'est l'appel le plus coûteux.
+      const review = attempt === 1 ? await aiReview(plan, script, out, work) : [];
       const post: QcCheck[] = [
         ...checkTechnical(plan, probed),
         ...checkFrames(plan, frames),
@@ -356,9 +359,10 @@ export async function doMontage(project: Project, job: MontageJob) {
 
       const fails = post.filter((c) => c.status === "fail");
       if (!fails.length || attempt === MAX_ATTEMPTS) break;
-      const fixed = await autoFix(fails, directions, { script, sceneDurations, assets });
+      const fixed = await autoFix(fails, script, assets);
       if (!fixed) break;
-      directions = fixed;
+      script = fixed;
+      directions = directionsFromScript(script);
     }
 
     await db()
@@ -366,6 +370,7 @@ export async function doMontage(project: Project, job: MontageJob) {
       .set({
         editPlan: plan,
         directions,
+        script,
         planVersion: project.planVersion + 1,
         qcReport: report,
         acknowledgedWarnings: [],
@@ -398,30 +403,24 @@ export async function doMontage(project: Project, job: MontageJob) {
 }
 
 /** Corrections automatiques après un test rouge. Renvoie null si rien n'est corrigeable. */
-async function autoFix(
-  fails: QcCheck[],
-  directions: Directions,
-  ctx: { script: Script; sceneDurations: { sceneId: string; durationSec: number }[]; assets: Asset[] },
-): Promise<Directions | null> {
-  let next = structuredClone(directions);
+async function autoFix(fails: QcCheck[], script: Script, assets: Asset[]): Promise<Script | null> {
+  let next = script;
   let changed = false;
   for (const f of fails) {
     const sceneId = f.sceneId?.split(".")[0];
     if (f.testId === "frames" && sceneId) {
-      // Image noire ou cassée : on remplace le visuel de la scène par un fond de couleur.
+      // Image noire ou cassée : la scène passe sur un fond généré.
       next = {
         ...next,
-        scenes: next.scenes.map((s) => (s.sceneId === sceneId ? { ...s, assetIds: [] } : s)),
+        scenes: next.scenes.map((s) => (s.id === sceneId ? { ...s, visuals: [] } : s)),
       };
       changed = true;
     } else if (f.testId === "ai-review" && sceneId) {
-      next = await ai().directMontage({
-        script: ctx.script,
-        sceneDurations: ctx.sceneDurations,
-        assets: ctx.assets.map(summary),
+      next = await ai().reviseScript({
+        script: next,
+        assets: assets.map(summary),
         instruction: `Corrige ce problème : ${f.title}. ${f.detail ?? ""}`,
         sceneId,
-        previous: next,
       });
       changed = true;
     } else if (f.testId === "technical") {
@@ -435,7 +434,8 @@ async function aiReview(plan: EditPlan, script: Script, file: string, work: stri
   const e = env();
   const dir = path.join(work, "frames");
   await mkdir(dir, { recursive: true });
-  const frames = await extractSceneFrames(e.FFMPEG_PATH, file, plan, dir);
+  // Petites images (320 px de large) : environ 4 fois moins de jetons qu'en 540 px.
+  const frames = await extractSceneFrames(e.FFMPEG_PATH, file, plan, dir, { width: 320, onePerScene: true });
   const issues = await ai()
     .reviewFrames({
       script,

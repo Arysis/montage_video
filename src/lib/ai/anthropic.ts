@@ -1,35 +1,114 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import type { z } from "zod";
-import { directionsSchema, type Directions } from "@/lib/plan/directions";
-import { scriptSchema, type Script } from "@/lib/script/schema";
+import { z } from "zod";
+import sharp from "sharp";
+import {
+  BACKGROUND_STYLES,
+  EFFECTS,
+  normalizeScript,
+  PACES,
+  sanitizeScript,
+  type Script,
+  TRANSITIONS,
+} from "@/lib/script/schema";
 import {
   assetDescriptionSchema,
   captionSchema,
   type AiProvider,
   type AssetSummary,
   type Caption,
-  type DirectionRequest,
   type ReviewIssue,
+  type ReviseRequest,
   reviewSchema,
   type ScriptRequest,
 } from "./types";
 
-const SYSTEM = `Tu es le monteur et scénariste d'une app qui fabrique des vidéos courtes (TikTok, Instagram Reels, YouTube Shorts) pour des créateurs solo.
-Tu écris en français, au tutoiement si le créateur parle à son public de façon directe.
-Règles d'écriture : phrases courtes (15 mots au plus), une accroche forte dans les 3 premières secondes, un appel à l'action clair à la fin.
-Tu n'inventes jamais de chiffres, de témoignages ni de faits que le créateur n'a pas donnés.`;
+// Consignes courtes : elles sont renvoyées à chaque appel.
+const SYSTEM = `Scénariste et monteur de vidéos courtes (TikTok, Reels, Shorts) pour créateurs solo. Français, tutoiement si le ton est direct.
+Écriture : phrases de 15 mots au plus, accroche forte dans les 3 premières secondes, appel à l'action clair à la fin.
+N'invente aucun chiffre, témoignage ni fait non donné par le créateur.`;
+
+// Ce que l'IA renvoie : clés courtes et ids de fichiers courts (f1, f2…) pour économiser les jetons.
+const aiDirectionShape = {
+  files: z.array(z.string()).max(4),
+  bg: z.enum(BACKGROUND_STYLES),
+  fx: z.array(z.enum(EFFECTS)).max(3),
+  next: z.enum(TRANSITIONS),
+  onScreen: z.string().max(60).nullable(),
+  character: z.object({ file: z.string(), talking: z.boolean() }).nullable(),
+  emphasis: z.array(z.string()).max(3),
+};
+const aiScriptSchema = z.object({
+  title: z.string().max(80),
+  pace: z.enum(PACES),
+  music: z.string().nullable(),
+  scenes: z
+    .array(z.object({ text: z.string(), visual: z.string().max(120), ...aiDirectionShape }))
+    .min(1)
+    .max(10),
+  caption: z.string().max(400),
+  hashtags: z.array(z.string()).max(5),
+});
+const aiReviseSchema = z.object({
+  scenes: z.array(z.object({ id: z.string(), ...aiDirectionShape })).max(12),
+});
+type AiDirection = { [K in keyof typeof aiDirectionShape]: z.infer<(typeof aiDirectionShape)[K]> };
+
+/** Ids courts pour l'IA (f1, f2…) et leur correspondance avec les vrais ids. */
+function shortIds(assets: AssetSummary[]) {
+  const toShort = new Map(assets.map((a, i) => [a.id, `f${i + 1}`]));
+  const toLong = new Map(assets.map((a, i) => [`f${i + 1}`, a.id]));
+  return {
+    short: (id: string | null) => (id ? (toShort.get(id) ?? null) : null),
+    long: (f: string) => toLong.get(f),
+  };
+}
+
+const DIRECTION_RULES = `Pour chaque scène :
+- files : fichiers à montrer (ids f…), vidéos/images seulement, 2 si la scène dure plus de 4 s et qu'il y en a assez ; [] si aucun ne colle.
+- bg : fond animé généré quand files est vide ou derrière un personnage (aurore, nuit, particules, degrade).
+- fx : 1 à 2 effets (zoom-in, zoom-out, pan, punch = zoom choc sur un mot fort, shake = secousse). Varie d'une scène à l'autre.
+- next : transition vers la scène suivante (cut, fade, slide, zoom, flash, wipe, blur). Surtout des cut pour le rythme, une transition marquée aux changements d'idée.
+- onScreen : texte court à l'écran (5 mots max) seulement s'il aide, sinon null.
+- character : un fichier de type character s'il doit apparaître, talking=true s'il dit le texte ; sinon null.
+- emphasis : 0 à 2 mots forts tirés du texte dit.`;
 
 type Content = Anthropic.Beta.Messages.BetaContentBlockParam;
 
-function describeAssets(assets: AssetSummary[]): string {
-  if (!assets.length) return "Aucun fichier fourni.";
+function describeAssets(assets: AssetSummary[], short: (id: string) => string | null): string {
+  if (!assets.length) return "Aucun.";
   return assets
     .map(
       (a) =>
-        `- id=${a.id} | type=${a.kind} | nom=${a.name}${a.durationSec ? ` | durée=${a.durationSec.toFixed(1)} s` : ""}${a.description ? ` | contenu : ${a.description}` : ""}`,
+        `${short(a.id)} ${a.kind} « ${a.name.slice(0, 40)} »${a.durationSec ? ` ${a.durationSec.toFixed(0)} s` : ""}${a.description ? ` : ${a.description.slice(0, 120)}` : ""}`,
     )
     .join("\n");
+}
+
+function fromAi(d: AiDirection, long: (f: string) => string | undefined) {
+  const characterId = d.character ? long(d.character.file) : undefined;
+  return {
+    visuals: d.files.map((f) => long(f)).filter((x): x is string => !!x),
+    background: d.bg,
+    effects: d.fx.length ? d.fx : (["zoom-in"] as const).slice(),
+    transition: d.next,
+    onScreenText: d.onScreen,
+    character: characterId ? { assetId: characterId, talking: !!d.character?.talking } : null,
+    emphasis: d.emphasis,
+  };
+}
+
+function toAi(s: Script["scenes"][number], short: (id: string | null) => string | null): AiDirection {
+  const character = s.character ? short(s.character.assetId) : null;
+  return {
+    files: s.visuals.map((id) => short(id)).filter((x): x is string => !!x),
+    bg: s.background,
+    fx: s.effects,
+    next: s.transition,
+    onScreen: s.onScreenText,
+    character: character ? { file: character, talking: !!s.character?.talking } : null,
+    emphasis: s.emphasis,
+  };
 }
 
 export class AnthropicProvider implements AiProvider {
@@ -54,7 +133,9 @@ export class AnthropicProvider implements AiProvider {
       model: this.model,
       max_tokens: maxTokens,
       system: SYSTEM,
-      thinking: { type: "adaptive" },
+      // Les petites tâches (légende, description, relecture) n'ont pas besoin de réflexion :
+      // on la coupe pour ne pas payer de jetons inutiles.
+      thinking: effort === "low" ? { type: "disabled" } : { type: "adaptive" },
       output_config: { effort, format: zodOutputFormat(schema) },
       // Si un filtre de sécurité refuse la demande, l'API relance sur un modèle de repli.
       betas: ["server-side-fallback-2026-07-01"],
@@ -71,59 +152,68 @@ export class AnthropicProvider implements AiProvider {
   }
 
   async generateScript(req: ScriptRequest): Promise<Script> {
-    const prompt = `Écris le script d'une vidéo à partir de cette idée.
+    const ids = shortIds(req.assets);
+    const prompt = `Écris le script détaillé d'une vidéo : texte dit, visuels, fonds, effets et transitions. Le montage suivra ce script à la lettre.
 
 Idée du créateur :
 """${req.idea}"""
 
-Format : ${req.format}. Plateformes : ${req.platforms.join(", ") || "non précisées"}.
-Durée visée : ${req.targetDurationSec} secondes, soit environ ${Math.round(req.targetDurationSec * 2.6)} mots dits à voix haute au total.
+Format ${req.format}, plateformes : ${req.platforms.join(", ") || "non précisées"}. Durée visée ${req.targetDurationSec} s, soit environ ${Math.round(req.targetDurationSec * 2.6)} mots dits au total.
 
-Fichiers du créateur (à utiliser en priorité dans les intentions visuelles) :
-${describeAssets(req.assets)}
+Fichiers du créateur (à utiliser en priorité) :
+${describeAssets(req.assets, ids.short)}
 
-Découpe en 3 à 8 scènes. Pour chaque scène : le texte dit (1 à 3 phrases), l'intention visuelle, et un texte court à l'écran seulement s'il aide (sinon null).
-Les ids de scène sont s1, s2, s3...
-Propose aussi une légende pour la publication (2 phrases au plus) et 3 à 5 hashtags sans espace, avec le #.`;
-    const script = await this.ask(scriptSchema, prompt, "medium");
-    return { ...script, scenes: script.scenes.map((s, i) => ({ ...s, id: `s${i + 1}` })) };
+3 à 8 scènes. text : 1 à 3 phrases dites. visual : ce qu'on voit, en une phrase.
+${DIRECTION_RULES}
+pace : calm, normal ou fast. music : un fichier de type music ou null.
+caption : légende de publication (2 phrases max). hashtags : 3 à 5, avec #.`;
+    const out = await this.ask(aiScriptSchema, prompt, "medium");
+    const script = normalizeScript({
+      title: out.title,
+      pace: out.pace,
+      musicAssetId: out.music ? (ids.long(out.music) ?? null) : null,
+      caption: out.caption,
+      hashtags: out.hashtags,
+      scenes: out.scenes.map((s, i) => ({
+        id: `s${i + 1}`,
+        text: s.text,
+        visualIntent: s.visual,
+        ...fromAi(s, ids.long),
+      })),
+    });
+    return sanitizeScript(script, new Set(req.assets.map((a) => a.id)));
   }
 
-  async directMontage(req: DirectionRequest): Promise<Directions> {
+  async reviseScript(req: ReviseRequest): Promise<Script> {
+    const ids = shortIds(req.assets);
     const scenes = req.script.scenes
-      .map((s) => {
-        const d = req.sceneDurations.find((x) => x.sceneId === s.id)?.durationSec ?? 0;
-        return `- ${s.id} (${d.toFixed(1)} s) : dit « ${s.text} » ; intention visuelle : ${s.visualIntent}${s.onScreenText ? ` ; texte à l'écran : ${s.onScreenText}` : ""}`;
-      })
+      .filter((s) => !req.sceneId || s.id === req.sceneId)
+      .map((s) => `${s.id} « ${s.text} » ${JSON.stringify(toAi(s, ids.short))}`)
       .join("\n");
-    const correction = req.instruction
-      ? `\nDemande de correction du créateur${req.sceneId ? ` (uniquement pour la scène ${req.sceneId}, garde les autres identiques)` : ""} :
-"""${req.instruction}"""
-Choix précédents : ${JSON.stringify(req.previous ?? null)}`
-      : "";
-    const prompt = `Décide le montage de cette vidéo.
+    const prompt = `Corrige le montage de cette vidéo. Le texte est déjà enregistré : ne change que les choix de montage.
 
-Scènes :
+Demande du créateur${req.sceneId ? ` (scène ${req.sceneId} seulement)` : ""} :
+"""${req.instruction}"""
+
+Scènes actuelles :
 ${scenes}
 
-Fichiers disponibles :
-${describeAssets(req.assets)}
+Fichiers :
+${describeAssets(req.assets, ids.short)}
 
-Pour chaque scène, choisis 1 à 4 fichiers visuels (vidéo, image, personnage ou logo) dans la liste, dans l'ordre d'apparition.
-Une scène de plus de 4 secondes doit avoir au moins 2 visuels pour garder du rythme, si assez de fichiers existent.
-Si aucun fichier ne convient, laisse la liste vide : la scène aura un fond aux couleurs de la marque.
-Choisis un mouvement (none, zoom-in, zoom-out). Les images fixes gagnent à avoir un zoom.
-Choisis une musique dans les fichiers de type music, ou null. Volume de la musique entre -24 et -14 dB.
-Choisis le rythme : calm, normal ou fast.
-N'utilise que des ids présents dans la liste.${correction}`;
-    const directions = await this.ask(directionsSchema, prompt, "medium");
-    const known = new Set(req.assets.map((a) => a.id));
-    return {
-      ...directions,
-      musicAssetId:
-        directions.musicAssetId && known.has(directions.musicAssetId) ? directions.musicAssetId : null,
-      scenes: directions.scenes.map((s) => ({ ...s, assetIds: s.assetIds.filter((id) => known.has(id)) })),
+${DIRECTION_RULES}
+Renvoie uniquement les scènes à modifier, avec leur id.`;
+    const out = await this.ask(aiReviseSchema, prompt, "low", 4000);
+    const byId = new Map(out.scenes.map((s) => [s.id, s]));
+    const next = {
+      ...req.script,
+      scenes: req.script.scenes.map((s) => {
+        const change = byId.get(s.id);
+        if (!change || (req.sceneId && s.id !== req.sceneId)) return s;
+        return { ...s, ...fromAi(change, ids.long) };
+      }),
     };
+    return sanitizeScript(normalizeScript(next), new Set(req.assets.map((a) => a.id)));
   }
 
   async reviewFrames(req: {
@@ -146,7 +236,7 @@ Si tout va bien, renvoie une liste vide.`,
         source: { type: "base64", media_type: "image/jpeg", data: f.jpeg.toString("base64") },
       });
     }
-    const result = await this.ask(reviewSchema, content, "low", 8000);
+    const result = await this.ask(reviewSchema, content, "low", 2000);
     return result.issues;
   }
 
@@ -155,10 +245,12 @@ Si tout va bien, renvoie une liste vide.`,
 Script : ${req.script.scenes.map((s) => s.text).join(" ")}
 ${req.previous ? `Propose autre chose que : """${req.previous}"""` : ""}
 Deux phrases au plus, qui donnent envie de regarder sans dévoiler la fin. Ajoute 3 à 5 hashtags pertinents avec le #.`;
-    return this.ask(captionSchema, prompt, "low", 4000);
+    return this.ask(captionSchema, prompt, "low", 1000);
   }
 
   async describeImage(req: { jpeg: Buffer; name: string; kind: string }): Promise<string | null> {
+    // Une petite image suffit pour la décrire, et coûte bien moins de jetons.
+    const small = await sharp(req.jpeg).resize(384, 384, { fit: "inside" }).jpeg({ quality: 75 }).toBuffer();
     const result = await this.ask(
       assetDescriptionSchema,
       [
@@ -168,11 +260,11 @@ Deux phrases au plus, qui donnent envie de regarder sans dévoiler la fin. Ajout
         },
         {
           type: "image",
-          source: { type: "base64", media_type: "image/jpeg", data: req.jpeg.toString("base64") },
+          source: { type: "base64", media_type: "image/jpeg", data: small.toString("base64") },
         },
       ],
       "low",
-      2000,
+      1000,
     );
     return result.description;
   }

@@ -159,7 +159,7 @@ export function MontageView(props: Props) {
   return (
     <>
       <TopBar
-        eyebrow={`${projectName} · Étape 3 sur 4`}
+        eyebrow={`${projectName} · Étape 4 sur 5`}
         title={title}
         actions={
           <>

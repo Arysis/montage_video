@@ -66,7 +66,7 @@ export function PublishForm(props: Props) {
 
   return (
     <>
-      <TopBar eyebrow={`${props.projectName} · Étape 4 sur 4`} title="Publication" />
+      <TopBar eyebrow={`${props.projectName} · Étape 5 sur 5`} title="Publication" />
       <form action={action} className={styles.body}>
         <input type="hidden" name="projectId" value={projectId} />
         <div className={styles.contentNarrow}>

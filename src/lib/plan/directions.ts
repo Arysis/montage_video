@@ -1,28 +1,51 @@
-import { z } from "zod";
+import type { BackgroundStyle, CharacterSlot, Effect, Script, Transition } from "@/lib/script/schema";
 
 /**
- * Ce que l'IA décide pour le montage : quels visuels pour chaque scène, quel mouvement,
- * quel texte à l'écran, quelle musique. Les horaires, eux, sont calculés à partir de la voix.
+ * Les choix de montage d'une scène : quels visuels, quel fond, quels effets, quelle transition.
+ * Ils viennent directement du script détaillé validé par le créateur : le montage n'appelle
+ * pas l'IA. Les horaires, eux, sont calculés à partir de la voix.
  */
-export const sceneDirectionSchema = z.object({
-  sceneId: z.string(),
-  /** Assets à utiliser dans l'ordre (plusieurs si la scène est longue). Vide : fond de couleur. */
-  assetIds: z.array(z.string()).max(4),
-  motion: z.enum(["none", "zoom-in", "zoom-out"]),
-  overlayText: z.string().max(80).nullable(),
-});
+export type SceneDirection = {
+  sceneId: string;
+  /** Fichiers à montrer, dans l'ordre (plusieurs plans si la scène est longue). Vide : fond généré. */
+  assetIds: string[];
+  background: BackgroundStyle;
+  effects: Effect[];
+  /** Transition vers la scène suivante. */
+  transition: Transition;
+  overlayText: string | null;
+  character: CharacterSlot | null;
+  emphasis: string[];
+};
 
-export const directionsSchema = z.object({
-  scenes: z.array(sceneDirectionSchema),
-  musicAssetId: z.string().nullable(),
-  musicVolumeDb: z.number().min(-40).max(-6),
-  pace: z.enum(["calm", "normal", "fast"]),
-});
+export type Directions = {
+  scenes: SceneDirection[];
+  musicAssetId: string | null;
+  musicVolumeDb: number;
+  pace: "calm" | "normal" | "fast";
+  subtitles: boolean;
+};
 
-export type Directions = z.infer<typeof directionsSchema>;
-export type SceneDirection = z.infer<typeof sceneDirectionSchema>;
+export function directionsFromScript(script: Script): Directions {
+  return {
+    pace: script.pace,
+    musicAssetId: script.musicAssetId,
+    musicVolumeDb: script.musicVolumeDb,
+    subtitles: script.subtitles.enabled,
+    scenes: script.scenes.map((s) => ({
+      sceneId: s.id,
+      assetIds: s.visuals,
+      background: s.background,
+      effects: s.effects,
+      transition: s.transition,
+      overlayText: s.onScreenText,
+      character: s.character,
+      emphasis: s.emphasis,
+    })),
+  };
+}
 
 /** Durée maximale d'un plan sans changement d'image, selon le rythme. */
 export function maxShotSeconds(pace: Directions["pace"]): number {
-  return pace === "fast" ? 2.5 : pace === "calm" ? 5 : 4;
+  return pace === "fast" ? 2 : pace === "calm" ? 4.5 : 3;
 }

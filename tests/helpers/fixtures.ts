@@ -1,7 +1,7 @@
 import { buildPlan, type BrandInput } from "@/lib/plan/build";
-import type { Directions } from "@/lib/plan/directions";
+import type { Directions, SceneDirection } from "@/lib/plan/directions";
 import type { EditPlan } from "@/lib/plan/schema";
-import type { Script } from "@/lib/script/schema";
+import { normalizeScript, type Script } from "@/lib/script/schema";
 import type { WordTiming } from "@/lib/stt/types";
 
 export const IDS = {
@@ -12,7 +12,7 @@ export const IDS = {
   "take-1": "55555555-5555-4555-8555-555555555555",
 } as const;
 
-export const script: Script = {
+export const script: Script = normalizeScript({
   title: "Trois erreurs",
   scenes: [
     {
@@ -37,7 +37,7 @@ export const script: Script = {
   ],
   caption: "Trois erreurs à éviter.",
   hashtags: ["#conseils"],
-};
+});
 
 /** Mots horodatés réguliers à partir d'un texte (0,4 s par mot, départ à 0,5 s). */
 export function wordsFor(text: string, start = 0.5, step = 0.4): WordTiming[] {
@@ -71,30 +71,35 @@ export const assets = [
   { id: "44444444-4444-4444-8444-444444444444", kind: "music", durationSec: 60 },
 ];
 
+const scene = (sceneId: string, assetIds: string[], extra: Partial<SceneDirection> = {}): SceneDirection => ({
+  sceneId,
+  assetIds,
+  background: "aurore",
+  effects: ["zoom-in"],
+  transition: "cut",
+  overlayText: null,
+  character: null,
+  emphasis: [],
+  ...extra,
+});
+
 export const directions: Directions = {
   pace: "normal",
   musicAssetId: "44444444-4444-4444-8444-444444444444",
   musicVolumeDb: -20,
+  subtitles: true,
   scenes: [
-    {
-      sceneId: "s1",
-      assetIds: ["22222222-2222-4222-8222-222222222222"],
-      motion: "none",
+    scene("s1", ["22222222-2222-4222-8222-222222222222"], {
+      effects: [],
       overlayText: "3 erreurs",
-    },
-    {
-      sceneId: "s2",
-      assetIds: ["11111111-1111-4111-8111-111111111111"],
-      motion: "zoom-in",
-      overlayText: null,
-    },
-    {
-      sceneId: "s3",
-      assetIds: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"],
-      motion: "zoom-out",
-      overlayText: null,
-    },
-    { sceneId: "s4", assetIds: [], motion: "none", overlayText: null },
+      transition: "flash",
+    }),
+    scene("s2", ["11111111-1111-4111-8111-111111111111"]),
+    scene("s3", ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"], {
+      effects: ["zoom-out"],
+      transition: "fade",
+    }),
+    scene("s4", []),
   ],
 };
 

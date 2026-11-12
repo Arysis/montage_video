@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { Directions } from "@/lib/plan/directions";
 import type { Script } from "@/lib/script/schema";
 
 export type AssetSummary = {
@@ -18,16 +17,13 @@ export type ScriptRequest = {
   assets: AssetSummary[];
 };
 
-export type DirectionRequest = {
+export type ReviseRequest = {
   script: Script;
-  /** Durée de chaque scène, calculée sur la voix. */
-  sceneDurations: { sceneId: string; durationSec: number }[];
   assets: AssetSummary[];
-  /** Demande de correction de l'utilisateur, en langage naturel. */
-  instruction?: string;
+  /** Demande de correction du créateur, en langage naturel. */
+  instruction: string;
   /** Scène à refaire, si la demande porte sur une seule partie. */
   sceneId?: string;
-  previous?: Directions;
 };
 
 export const reviewIssueSchema = z.object({
@@ -49,8 +45,16 @@ export const assetDescriptionSchema = z.object({ description: z.string().max(300
 
 export interface AiProvider {
   readonly name: string;
+  /**
+   * Écrit le script détaillé complet (texte, fonds, effets, transitions, personnage, musique)
+   * en un seul appel : le montage s'en sert ensuite sans rappeler l'IA.
+   */
   generateScript(req: ScriptRequest): Promise<Script>;
-  directMontage(req: DirectionRequest): Promise<Directions>;
+  /**
+   * Corrige les choix de montage (pas le texte, déjà enregistré) d'après une demande du créateur.
+   * Ne renvoie que les scènes modifiées, fusionnées dans le script.
+   */
+  reviseScript(req: ReviseRequest): Promise<Script>;
   reviewFrames(req: {
     script: Script;
     frames: { sceneId: string; jpeg: Buffer; spokenText: string }[];
