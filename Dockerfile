@@ -34,7 +34,7 @@ COPY --from=build --chown=app:app /app/public ./public
 COPY --from=build --chown=app:app /app/dist ./dist
 COPY --from=build --chown=app:app /app/drizzle ./drizzle
 COPY --from=build --chown=app:app /app/assets ./assets
-COPY --from=build --chown=app:app /app/next.config.ts ./next.config.ts
+COPY --from=build --chown=app:app /app/next.config.mjs ./next.config.mjs
 RUN mkdir -p /app/.data && chown app:app /app/.data
 USER app
 EXPOSE 3000
