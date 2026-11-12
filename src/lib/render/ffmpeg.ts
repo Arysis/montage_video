@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { characterInputArgs, characterOverlay, mergeIntervals } from "@/lib/character/render";
 import type { EditPlan, Motion, PlanScene } from "@/lib/plan/schema";
+import { BG_MARGIN, type BackgroundFiles, backgroundKey } from "./backgrounds";
 
 export type ResolvedMedia = {
   /** Chemin local de chaque asset du plan (vidéo, image, musique, logo en PNG). */
@@ -10,6 +11,8 @@ export type ResolvedMedia = {
   fontsDir: string;
   /** Liste concat des poses de chaque personnage animé (par id de son image principale). */
   characters?: Map<string, string>;
+  /** Images des fonds animés (par backgroundKey), dessinées avant le rendu. */
+  backgrounds?: Map<string, BackgroundFiles>;
 };
 
 export type RenderOptions = { preset?: string; crf?: number; scale?: number };
@@ -32,42 +35,39 @@ export function mixHex(a: string, b: string, t: number): string {
 type Generated = Extract<PlanScene["visual"], { type: "generated" }>;
 
 /**
- * Fond animé aux couleurs de la marque, calculé par FFmpeg (aucun fichier, aucun appel à l'IA).
- * Calculé en basse définition puis agrandi : flou naturel et rendu rapide.
+ * Fond animé aux couleurs de la marque. L'image est dessinée à l'avance (voir backgrounds.ts)
+ * et ne fait que dériver lentement : uniquement des filtres de base (crop, overlay), qui
+ * marchent pareil sur toutes les versions de FFmpeg.
  */
 export function generatedBackground(
   v: Generated,
-  o: { W: number; H: number; fps: number; dur: number; label: string },
-): string[] {
-  const [primary, background, accent = primary] = v.colors as [string, string, string?];
-  const w = Math.max(64, Math.round(o.W / 4));
-  const h = Math.max(64, Math.round(o.H / 4));
+  files: BackgroundFiles | undefined,
+  o: { W: number; H: number; fps: number; dur: number; label: string; nextInput: number },
+): { args: string[]; filters: string[]; inputs: number } {
   const d = o.dur.toFixed(3);
-  const common = `s=${w}x${h}:rate=${o.fps}:duration=${d}:seed=${v.seed}`;
-  const up = `scale=${o.W}:${o.H}:flags=bicubic`;
-  const c = (hex: string) => hex0x(hex);
-  switch (v.style) {
-    case "nuit":
-      return [
-        `gradients=${common}:c0=${c(background)}:c1=${c(mixHex(background, primary, 0.28))}:c2=${c(background)}:c3=${c(mixHex(background, accent, 0.18))}:nb_colors=4:speed=0.015,gblur=sigma=28,${up},noise=c0s=7:allf=t,vignette=PI/5,format=yuv420p[${o.label}]`,
-      ];
-    case "degrade":
-      return [
-        `gradients=${common}:c0=${c(primary)}:c1=${c(mixHex(primary, accent, 0.5))}:c2=${c(accent)}:nb_colors=3:speed=0.02,gblur=sigma=12,${up},noise=c0s=5:allf=t,format=yuv420p[${o.label}]`,
-      ];
-    case "particules":
-      return [
-        `gradients=${common}:c0=${c(background)}:c1=${c(mixHex(background, primary, 0.22))}:c2=${c(background)}:nb_colors=3:speed=0.015,gblur=sigma=20,${up},format=yuv420p[${o.label}g]`,
-        `color=c=${c(mixHex(primary, "#FFFFFF", 0.2))}:s=${o.W}x${o.H}:r=${o.fps}:d=${d},format=yuva420p[${o.label}c]`,
-        `life=s=${Math.round(w / 2.5)}x${Math.round(h / 2.5)}:mold=12:rate=${o.fps}:ratio=0.06:seed=${v.seed}:death_color=black:life_color=white:mold_color=0x404040,trim=duration=${d},gblur=sigma=2.5,${up},format=gray[${o.label}m]`,
-        `[${o.label}c][${o.label}m]alphamerge[${o.label}p]`,
-        `[${o.label}g][${o.label}p]overlay=shortest=1,vignette=PI/5,format=yuv420p[${o.label}]`,
-      ];
-    default:
-      return [
-        `gradients=${common}:c0=${c(primary)}:c1=${c(background)}:c2=${c(accent)}:c3=${c(background)}:nb_colors=4:speed=0.025,gblur=sigma=45,${up},noise=c0s=6:allf=t,format=yuv420p[${o.label}]`,
-      ];
+  if (!files) {
+    return {
+      args: [],
+      filters: [`color=c=${hex0x(v.colors[1] ?? "#0E0F11")}:s=${o.W}x${o.H}:r=${o.fps}:d=${d}[${o.label}]`],
+      inputs: 0,
+    };
   }
+  const loop = (file: string) => ["-loop", "1", "-framerate", String(o.fps), "-t", d, "-i", file];
+  const bw = Math.round((o.W * BG_MARGIN) / 2) * 2;
+  const bh = Math.round((o.H * BG_MARGIN) / 2) * 2;
+  const phase = (v.seed % 7) * 0.9;
+  const args = loop(files.image);
+  const filters = [
+    `[${o.nextInput}:v]scale=${bw}:${bh},crop=${o.W}:${o.H}:x='(iw-ow)/2*(1+0.9*sin(t*0.35+${phase}))':y='(ih-oh)/2*(1+0.9*cos(t*0.27+${phase}))',format=yuv420p[${o.label}${files.particles ? "b" : ""}]`,
+  ];
+  if (files.particles) {
+    args.push(...loop(files.particles));
+    filters.push(
+      `[${o.nextInput + 1}:v]scale=${o.W}:${o.H * 2},format=rgba[${o.label}p]`,
+      `[${o.label}b][${o.label}p]overlay=x=0:y='-mod(t*${Math.round(o.H / 12)},${o.H})':shortest=1,format=yuv420p[${o.label}]`,
+    );
+  }
+  return { args, filters, inputs: files.particles ? 2 : 1 };
 }
 
 /** Expressions zoompan : mouvement lent, zooms chocs et secousse. */
@@ -179,7 +179,17 @@ export function buildFfmpegArgs(
         `color=c=${hex0x(visual.color)}:s=${W}x${H}:r=${fps}:d=${clipDur.toFixed(3)},setsar=1,${finish}[${base}]`,
       );
     } else if (visual.type === "generated") {
-      filters.push(...generatedBackground(visual, { W, H, fps, dur: clipDur, label: `${base}g` }));
+      const bg = generatedBackground(visual, media.backgrounds?.get(backgroundKey(visual)), {
+        W,
+        H,
+        fps,
+        dur: clipDur,
+        label: `${base}g`,
+        nextInput: inputIndex,
+      });
+      args.push(...bg.args);
+      filters.push(...bg.filters);
+      inputIndex += bg.inputs;
       filters.push(`[${base}g]setsar=1,${finish}[${base}]`);
     } else {
       const asset = media.assets.get(visual.assetId);

@@ -61,6 +61,12 @@ const schema = z.object({
     .default("false")
     .transform((v) => v === "true"),
 
+  // Banques libres de droits pour illustrer les scènes sans fichier (dans cet ordre).
+  // Openverse ne demande pas de clé ; Pexels et Pixabay (vidéos) demandent une clé gratuite.
+  STOCK_PROVIDERS: z.string().default("pexels,pixabay,openverse"),
+  PEXELS_API_KEY: z.string().optional(),
+  PIXABAY_API_KEY: z.string().optional(),
+
   MAX_UPLOAD_MB: z.coerce.number().int().positive().default(500),
   FFMPEG_PATH: z.string().default("ffmpeg"),
   FFPROBE_PATH: z.string().default("ffprobe"),

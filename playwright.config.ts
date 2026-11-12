@@ -17,6 +17,7 @@ const testEnv = {
   STT_PROVIDER: "mock",
   PUBLISH_PROVIDER: "mock",
   EMAIL_PROVIDER: "log",
+  STOCK_PROVIDERS: "",
   ALLOW_MOCK_IN_PRODUCTION: "1",
   FREE_VIDEOS_PER_MONTH: "5",
 };

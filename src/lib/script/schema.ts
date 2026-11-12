@@ -66,6 +66,8 @@ export const sceneScriptSchema = z.object({
   effects: z.array(z.enum(EFFECTS)).max(3).default(["zoom-in"]),
   transition: z.enum(TRANSITIONS).default("cut"),
   character: characterSlotSchema.nullable().default(null),
+  /** Mots-clés pour chercher une vidéo ou une photo libre de droits si la scène n'a pas de fichier. */
+  search: z.string().max(80).nullable().default(null),
   /** Mots forts : zoom choc au moment où ils sont dits, mis en avant dans les sous-titres. */
   emphasis: z.array(z.string()).max(4).default([]),
 });
