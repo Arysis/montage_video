@@ -123,7 +123,7 @@ describe("plan de montage", () => {
     });
     const s4 = plan.scenes.find((s) => s.id === "s4")!;
     expect(s4.visual.type).toBe("generated");
-    expect(s4.character).toEqual({ assetId: character, talking: false });
+    expect(s4.character).toEqual({ assetId: character, talking: true });
     expect(referencedAssetIds(plan)).toContain(character);
   });
 

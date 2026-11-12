@@ -27,7 +27,16 @@ export type LibraryAsset = {
   fontFamily: string | null;
   analyzed: boolean;
   uses: number;
+  characterName: string | null;
+  pose: "closed" | "half" | "open" | "blink" | null;
 };
+
+const POSE_LABELS = {
+  closed: "Bouche fermée",
+  half: "Bouche mi-ouverte",
+  open: "Bouche ouverte",
+  blink: "Yeux fermés",
+} as const;
 
 const KIND_LABELS: Record<Kind, string> = {
   logo: "Logo",
@@ -119,7 +128,15 @@ export function Library({ assets }: { assets: LibraryAsset[] }) {
   }, [assets, tab, query]);
   const selected = assets.find((a) => a.id === selectedId) ?? assets[0] ?? null;
 
-  const change = (patch: { kind?: string; rights?: string }) => {
+  const characterNames = useMemo(
+    () => [...new Set(assets.map((a) => a.characterName).filter((n): n is string => !!n))],
+    [assets],
+  );
+  const siblings = selected?.characterName
+    ? assets.filter((a) => a.kind === "character" && a.characterName === selected.characterName)
+    : [];
+
+  const change = (patch: { kind?: string; rights?: string; characterName?: string; pose?: string }) => {
     if (!selected) return;
     setError(undefined);
     startTransition(async () => {
@@ -240,7 +257,9 @@ export function Library({ assets }: { assets: LibraryAsset[] }) {
                       {a.kind === "font" && a.fontFamily ? a.fontFamily : a.name}
                     </span>
                     <span className="caption subtle">
-                      {KIND_LABELS[a.kind]}
+                      {a.kind === "character" && a.characterName
+                        ? `${a.characterName} · ${POSE_LABELS[a.pose ?? "closed"].toLowerCase()}`
+                        : KIND_LABELS[a.kind]}
                       {a.rights === "unknown" ? " · droits à préciser" : ""}
                     </span>
                   </button>
@@ -295,6 +314,56 @@ export function Library({ assets }: { assets: LibraryAsset[] }) {
                     <option value="image">Image</option>
                   </select>
                 </div>
+              )}
+              {selected.kind === "character" && (
+                <>
+                  <div className="field">
+                    <label htmlFor="asset-character" className="label">
+                      Personnage
+                    </label>
+                    <input
+                      id="asset-character"
+                      key={`${selected.id}-name`}
+                      className="input"
+                      list="character-names"
+                      defaultValue={selected.characterName ?? ""}
+                      maxLength={60}
+                      disabled={pending}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        if (v && v !== selected.characterName) change({ characterName: v });
+                      }}
+                    />
+                    <datalist id="character-names">
+                      {characterNames.map((n) => (
+                        <option key={n} value={n} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <div className="field">
+                    <label htmlFor="asset-pose" className="label">
+                      Cette image montre
+                    </label>
+                    <select
+                      id="asset-pose"
+                      className="select"
+                      value={selected.pose ?? "closed"}
+                      disabled={pending}
+                      onChange={(e) => change({ pose: e.target.value })}
+                    >
+                      {Object.entries(POSE_LABELS).map(([v, label]) => (
+                        <option key={v} value={v}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="help">
+                      {siblings.some((s) => s.pose === "open" || s.pose === "half")
+                        ? `Ce personnage a ${siblings.length} images : sa bouche bouge quand il parle.`
+                        : "Ajoute une image du même personnage bouche ouverte (même nom) pour que sa bouche bouge quand il parle. PNG détouré conseillé."}
+                    </p>
+                  </div>
+                </>
               )}
               <div className="field">
                 <label htmlFor="asset-rights" className="label">

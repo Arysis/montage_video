@@ -10,6 +10,7 @@ import { planLimits } from "@/lib/billing/plans";
 import { db, schema } from "@/lib/db";
 import { enqueue, QUEUES } from "@/lib/jobs";
 import { linkAssets, needsScriptValidation, ownedProject, projectAssets, usage } from "@/lib/projects";
+import { mainCharacterImages } from "@/lib/character/poses";
 import { normalizeScript, sanitizeScript, scriptSchema } from "@/lib/script/schema";
 import { storage } from "@/lib/storage";
 
@@ -83,7 +84,7 @@ export async function createProject(_prev: ActionState, form: FormData): Promise
   await linkAssets(user.id, projectId, assetIds);
 
   try {
-    const assets = await projectAssets(projectId);
+    const assets = mainCharacterImages(await projectAssets(projectId));
     const script = await ai().generateScript({
       idea: parsed.data.idea,
       format: parsed.data.format,

@@ -1,3 +1,4 @@
+import { buildCharacterRigs, type TalkingCharacter } from "@/lib/character/plan";
 import type { BrandColor } from "@/lib/db/schema";
 import type { Script } from "@/lib/script/schema";
 import type { WordTiming } from "@/lib/stt/types";
@@ -31,6 +32,10 @@ export type BuildInput = {
   assets: PlanAsset[];
   brand: BrandInput;
   watermark: boolean;
+  /** Personnage fourni pour la vidéo : il apparaît et parle (bouche animée s'il a plusieurs images). */
+  characters?: TalkingCharacter[];
+  /** Enveloppe de la voix (voir voiceEnvelope), pour animer la bouche. */
+  voiceEnvelope?: Float32Array | null;
 };
 
 export const DEFAULT_BRAND_COLORS = {
@@ -122,6 +127,13 @@ export function buildPlan(input: BuildInput): EditPlan {
   if (spans[0]) spans[0].firstWord = 0;
 
   const assetById = new Map(assets.map((a) => [a.id, a]));
+  // Les images d'un personnage qui parle ne servent pas de fond : il est incrusté par-dessus.
+  const characterImages = new Set((input.characters ?? []).flatMap((c) => c.group.ids));
+  const speaker = input.characters?.[0]?.group.mainId ?? null;
+  const mainOf = (id: string) => input.characters?.find((c) => c.group.ids.includes(id))?.group.mainId ?? id;
+  const scriptHasCharacter = directions.scenes.some(
+    (d) => d.character || d.assetIds.some((id) => assetById.get(id)?.kind === "character"),
+  );
   const palette = brandPalette(brand.colors);
   const shotMax = maxShotSeconds(directions.pace);
   const scenes: PlanScene[] = [];
@@ -140,8 +152,14 @@ export function buildPlan(input: BuildInput): EditPlan {
       .filter((a): a is PlanAsset => !!a);
     // Un personnage choisi comme visuel est incrusté sur un fond généré plutôt que recadré.
     const firstCharacter = chosen.find((a) => a.kind === "character");
-    if (!character && firstCharacter) character = { assetId: firstCharacter.id, talking: false };
-    const visualAssets = chosen.filter((a) => a.kind === "video" || a.kind === "image");
+    if (!character && firstCharacter) character = { assetId: firstCharacter.id, talking: true };
+    // Toutes les images d'un personnage animé (ses poses) renvoient à son image principale.
+    if (character) character = { ...character, assetId: mainOf(character.assetId) };
+    // Sans personnage dans le script, le personnage fourni pour la vidéo parle partout.
+    if (!scriptHasCharacter && speaker) character = { assetId: speaker, talking: true };
+    const visualAssets = chosen.filter(
+      (a) => (a.kind === "video" || a.kind === "image") && !characterImages.has(a.id),
+    );
     const sceneWords = words.slice(span.firstWord, span.lastWord + 1);
     const emphasis = new Set((direction?.emphasis ?? []).flatMap((w) => tokenize(w)));
     const generated: PlanScene["visual"] = {
@@ -221,6 +239,20 @@ export function buildPlan(input: BuildInput): EditPlan {
   const musicAsset = directions.musicAssetId ? assetById.get(directions.musicAssetId) : undefined;
   const logoAsset = brand.logoAssetId ? assetById.get(brand.logoAssetId) : undefined;
 
+  const characterRigs = input.characters?.length
+    ? buildCharacterRigs({
+        format,
+        width,
+        height,
+        durationSec: timelineEnd,
+        scenes,
+        characters: input.characters,
+        envelope: input.voiceEnvelope ?? null,
+        words,
+        trimStart,
+      })
+    : undefined;
+
   return {
     version: 1,
     format,
@@ -270,5 +302,6 @@ export function buildPlan(input: BuildInput): EditPlan {
     },
     outro: null,
     watermark: input.watermark,
+    ...(characterRigs && Object.keys(characterRigs).length ? { characterRigs } : {}),
   };
 }

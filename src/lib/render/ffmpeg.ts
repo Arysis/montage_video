@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { characterInputArgs, characterOverlay, mergeIntervals } from "@/lib/character/render";
 import type { EditPlan, Motion, PlanScene } from "@/lib/plan/schema";
 
 export type ResolvedMedia = {
@@ -7,6 +8,8 @@ export type ResolvedMedia = {
   voicePath: string | null;
   assPath: string;
   fontsDir: string;
+  /** Liste concat des poses de chaque personnage animé (par id de son image principale). */
+  characters?: Map<string, string>;
 };
 
 export type RenderOptions = { preset?: string; crf?: number; scale?: number };
@@ -112,10 +115,12 @@ export function cameraExpressions(
 export type OverlayParts = { args: string[]; filters: string[]; label: string; inputs: number };
 
 /**
- * Incrustation du personnage de la scène (image fixe, centrée en bas, sous les sous-titres).
- * Point d'extension : le module « personnage qui parle » remplace ce rendu par une bouche animée.
+ * Incrustation fixe du personnage de la scène (centré en bas, sous les sous-titres), pour un
+ * personnage qui n'est pas animé. Les personnages animés (plan.characterRigs) sont incrustés
+ * plus loin, sur toute la vidéo, par le module personnage.
  */
-export function characterOverlay(p: {
+export function staticCharacterOverlay(p: {
+  plan: EditPlan;
   scene: PlanScene;
   index: number;
   baseLabel: string;
@@ -126,7 +131,7 @@ export function characterOverlay(p: {
   fps: number;
   clipDur: number;
 }): OverlayParts | null {
-  if (!p.scene.character) return null;
+  if (!p.scene.character || p.plan.characterRigs?.[p.scene.character.assetId]) return null;
   const file = p.media.assets.get(p.scene.character.assetId);
   if (!file) return null;
   const h = Math.round((p.H * 0.6) / 2) * 2;
@@ -215,7 +220,8 @@ export function buildFfmpegArgs(
       inputIndex++;
     }
     let label = base;
-    const overlay = characterOverlay({
+    const overlay = staticCharacterOverlay({
+      plan,
       scene,
       index: k,
       baseLabel: base,
@@ -252,6 +258,28 @@ export function buildFfmpegArgs(
     current = out;
   }
   let videoOut = current;
+
+  // Personnages animés : par-dessus le fond, sous le logo et les sous-titres.
+  Object.entries(plan.characterRigs ?? {}).forEach(([id, rig], k) => {
+    const list = media.characters?.get(id);
+    const visible = mergeIntervals(plan.scenes.filter((s) => s.character?.assetId === id));
+    if (!list || !visible.length) return;
+    args.push(...characterInputArgs(list));
+    filters.push(
+      ...characterOverlay({
+        rig,
+        inputIndex,
+        videoIn: videoOut,
+        out: `vchar${k}`,
+        label: `char${k}`,
+        fps,
+        scale,
+        visible,
+      }),
+    );
+    videoOut = `vchar${k}`;
+    inputIndex++;
+  });
 
   if (plan.logo) {
     const logo = media.assets.get(plan.logo.assetId);

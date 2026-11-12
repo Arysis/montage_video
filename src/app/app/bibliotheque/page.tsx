@@ -34,6 +34,8 @@ export default async function LibraryPage() {
           durationSec: a.durationSec,
           fontFamily: a.fontFamily,
           analyzed: !!a.analyzedAt,
+          characterName: a.characterName,
+          pose: a.pose,
           uses: useMap.get(a.id) ?? 0,
         }))}
     />
