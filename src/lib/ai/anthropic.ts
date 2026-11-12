@@ -37,6 +37,7 @@ const aiDirectionShape = {
   onScreen: z.string().max(60).nullable(),
   character: z.object({ file: z.string(), talking: z.boolean() }).nullable(),
   emphasis: z.array(z.string()).max(3),
+  search: z.string().max(60),
 };
 const aiScriptSchema = z.object({
   title: z.string().max(80),
@@ -71,7 +72,8 @@ const DIRECTION_RULES = `Pour chaque scène :
 - next : transition vers la scène suivante (cut, fade, slide, zoom, flash, wipe, blur). Surtout des cut pour le rythme, une transition marquée aux changements d'idée.
 - onScreen : texte court à l'écran (5 mots max) seulement s'il aide, sinon null.
 - character : un fichier de type character s'il doit apparaître, talking=true s'il dit le texte ; sinon null.
-- emphasis : 0 à 2 mots forts tirés du texte dit.`;
+- emphasis : 0 à 2 mots forts tirés du texte dit.
+- search : 2 à 4 mots-clés concrets en anglais pour trouver une vidéo libre de droits qui montre la scène (objets, lieux, gestes ; pas d'idées abstraites).`;
 
 type Content = Anthropic.Beta.Messages.BetaContentBlockParam;
 
@@ -95,6 +97,7 @@ function fromAi(d: AiDirection, long: (f: string) => string | undefined) {
     onScreenText: d.onScreen,
     character: characterId ? { assetId: characterId, talking: !!d.character?.talking } : null,
     emphasis: d.emphasis,
+    search: d.search || null,
   };
 }
 
@@ -108,6 +111,7 @@ function toAi(s: Script["scenes"][number], short: (id: string | null) => string 
     onScreen: s.onScreenText,
     character: character ? { file: character, talking: !!s.character?.talking } : null,
     emphasis: s.emphasis,
+    search: s.search ?? "",
   };
 }
 

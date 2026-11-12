@@ -45,6 +45,7 @@ export class MockProvider implements AiProvider {
         effects: i === 0 ? ["punch", "shake"] : i % 2 ? ["zoom-in", "pan"] : ["zoom-out"],
         transition: transitions[i]!,
         character: character && i === 0 ? { assetId: character.id, talking: true } : null,
+        search: i % 2 === 0 ? "creator phone video" : null,
         emphasis: i === 0 ? [topic.split(" ")[0] ?? ""].filter(Boolean) : [],
       })),
       caption: `${topic}. Regarde jusqu'au bout.`,

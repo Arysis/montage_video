@@ -103,6 +103,7 @@ export function ScriptEditor({
           effects: ["zoom-in"],
           transition: "cut",
           character: null,
+          search: null,
           emphasis: [],
         },
       ],
@@ -262,7 +263,10 @@ export function ScriptEditor({
                           </select>
                         ) : (
                           sc.visuals.length === 0 && (
-                            <p className="help">Pas de fichier : la scène aura un fond animé.</p>
+                            <p className="help">
+                              Pas de fichier : au montage, l&apos;app cherche une vidéo libre de droits avec
+                              les mots-clés ci-dessous, sinon un fond animé.
+                            </p>
                           )
                         )}
                       </div>
@@ -287,6 +291,25 @@ export function ScriptEditor({
                         <p className="help">Utilisé sans fichier, ou derrière le personnage.</p>
                       </div>
                     </div>
+
+                    {sc.visuals.length === 0 && (
+                      <div className="field">
+                        <label htmlFor={`${id}-search`} className="label">
+                          Recherche d&apos;images libres de droits
+                        </label>
+                        <input
+                          id={`${id}-search`}
+                          className="input"
+                          maxLength={80}
+                          placeholder={sc.visualIntent}
+                          value={sc.search ?? ""}
+                          onChange={(e) => updateScene(i, { search: e.target.value || null })}
+                        />
+                        <p className="help">
+                          Des mots concrets en anglais marchent mieux : « laptop padlock », « city night ».
+                        </p>
+                      </div>
+                    )}
 
                     <fieldset className={f.fieldset}>
                       <legend className="label">Effets</legend>

@@ -35,8 +35,10 @@ import { checkPlatforms, checkReadability, contrastRatio } from "@/lib/qc/rules"
 import { blocksPublication, type QcCheck, type QcReport } from "@/lib/qc/types";
 import { cleanVoice } from "@/lib/audio/voice";
 import { buildAss } from "@/lib/render/ass";
+import { type BackgroundFiles, backgroundKey, renderBackground } from "@/lib/render/backgrounds";
 import { buildFfmpegArgs, run } from "@/lib/render/ffmpeg";
 import { normalizeScript, type Script } from "@/lib/script/schema";
+import { illustrateScript } from "@/lib/stock";
 import { storage } from "@/lib/storage";
 import { checksRenderedSync, isEstimatedTranscript, isRealStt, stt } from "@/lib/stt";
 import type { MontageJob } from "@/lib/jobs";
@@ -243,6 +245,23 @@ export async function doMontage(project: Project, job: MontageJob) {
         instruction: job.instruction,
         sceneId: job.sceneId,
       });
+      await db().update(schema.projects).set({ script }).where(eq(schema.projects.id, project.id));
+    }
+    // Scènes sans fichier : on cherche des plans libres de droits qui montrent ce qui est dit.
+    const before = JSON.stringify(script.scenes.map((s) => s.visuals));
+    const illustrated = await illustrateScript({
+      userId: project.userId,
+      script,
+      orientation:
+        project.format === "9:16" ? "portrait" : project.format === "16:9" ? "landscape" : "square",
+      work: path.join(work, "stock"),
+    }).catch((err) => {
+      console.error("[stock]", err);
+      return { script, added: [] as Asset[] };
+    });
+    if (JSON.stringify(illustrated.script.scenes.map((s) => s.visuals)) !== before) {
+      script = illustrated.script;
+      assets.push(...illustrated.added.filter((a) => !assets.some((x) => x.id === a.id)));
       await db().update(schema.projects).set({ script }).where(eq(schema.projects.id, project.id));
     }
     let directions: Directions = directionsFromScript(script);
@@ -598,11 +617,22 @@ export async function renderPlan(
       await prepareCharacter(rig, files, path.join(opts.work, `character-${id}`), opts.scale),
     );
   }
+  // Fonds animés : images dessinées une fois par fond, à la taille du rendu.
+  const backgrounds = new Map<string, BackgroundFiles>();
+  const bgDir = path.join(opts.work, "backgrounds");
+  await mkdir(bgDir, { recursive: true });
+  const W = Math.round((plan.width * (opts.scale ?? 1)) / 2) * 2;
+  const H = Math.round((plan.height * (opts.scale ?? 1)) / 2) * 2;
+  for (const scene of plan.scenes) {
+    if (scene.visual.type !== "generated") continue;
+    const key = backgroundKey(scene.visual);
+    if (!backgrounds.has(key)) backgrounds.set(key, await renderBackground(scene.visual, W, H, bgDir));
+  }
   const assPath = path.join(opts.work, "subtitles.ass");
   await writeFile(assPath, buildAss(plan, { watermarkText: `Fait avec ${e.APP_NAME}` }));
   const args = buildFfmpegArgs(
     plan,
-    { assets: media, voicePath: opts.voiceFile, assPath, fontsDir, characters },
+    { assets: media, voicePath: opts.voiceFile, assPath, fontsDir, characters, backgrounds },
     opts.out,
     {
       preset: "veryfast",
