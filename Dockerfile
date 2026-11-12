@@ -25,7 +25,8 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg fontconfig ca-certificates tini \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
+# XDG_CACHE_HOME : cache de fontconfig (sous-titres) dans un dossier inscriptible par l'utilisateur app.
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0 XDG_CACHE_HOME=/tmp/cache
 RUN groupadd --system app && useradd --system --gid app --home /app app
 COPY --from=build --chown=app:app /app/package.json ./
 COPY --from=build --chown=app:app /app/node_modules ./node_modules

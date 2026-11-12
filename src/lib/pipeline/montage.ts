@@ -166,6 +166,26 @@ export async function doMontage(project: Project, job: MontageJob) {
       await db().update(schema.takes).set({ words }).where(eq(schema.takes.id, take.id));
     }
 
+    // Les prises WebM du navigateur peuvent changer de format audio en cours de route, ce qui fait
+    // échouer le graphe de filtres du rendu (« Cannot select channel layout »). On les convertit
+    // d'abord en WAV mono 48 kHz, au format fixe.
+    const renderVoice = path.join(work, "voice-render.wav");
+    await run(e.FFMPEG_PATH, [
+      "-hide_banner",
+      "-nostats",
+      "-y",
+      "-i",
+      voiceFile,
+      "-vn",
+      "-ac",
+      "1",
+      "-ar",
+      "48000",
+      "-c:a",
+      "pcm_s16le",
+      renderVoice,
+    ]);
+
     const assets = await candidateAssets(project, kit);
     const spans = sceneSpans(script.scenes, words);
     const sceneDurations = spans.map((s, i) => {
@@ -243,7 +263,7 @@ export async function doMontage(project: Project, job: MontageJob) {
       let out = path.join(work, `render-${attempt}.mp4`);
       await renderPlan(plan, {
         work,
-        voiceFile,
+        voiceFile: renderVoice,
         assets,
         out,
         onProgress: (p) => setProgress(project.id, base + 5 + p * 0.55, "Rendu de la vidéo"),

@@ -138,7 +138,9 @@ export function buildFfmpegArgs(
     filters.push(`[${inputIndex}:a]anull[mix]`);
     inputIndex++;
   }
-  filters.push(`[mix]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,apad,atrim=0:${D}[aout]`);
+  filters.push(
+    `[mix]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,apad,atrim=0:${D}[aout]`,
+  );
 
   args.push(
     "-filter_complex",
