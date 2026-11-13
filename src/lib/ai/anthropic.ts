@@ -4,11 +4,16 @@ import { z } from "zod";
 import sharp from "sharp";
 import {
   BACKGROUND_STYLES,
+  diversifyScript,
   EFFECTS,
+  MUSIC_MOODS,
   normalizeScript,
   PACES,
   sanitizeScript,
   type Script,
+  type Structure,
+  STRUCTURES,
+  type Tone,
   TRANSITIONS,
 } from "@/lib/script/schema";
 import {
@@ -24,9 +29,26 @@ import {
 } from "./types";
 
 // Consignes courtes : elles sont renvoyées à chaque appel.
-const SYSTEM = `Scénariste et monteur de vidéos courtes (TikTok, Reels, Shorts) pour créateurs solo. Français, tutoiement si le ton est direct.
-Écriture : phrases de 15 mots au plus, accroche forte dans les 3 premières secondes, appel à l'action clair à la fin.
+const SYSTEM = `Scénariste et monteur de vidéos courtes (TikTok, Reels, Shorts) pour créateurs solo. Français oral et naturel, tutoiement si le ton s'y prête.
+Accroche dans les 3 premières secondes (question, promesse, contre-pied), une idée par scène, relance de l'attention à mi-vidéo, appel à l'action précis à la fin. Phrases de 15 mots au plus, mots concrets, aucune formule creuse.
 N'invente aucun chiffre, témoignage ni fait non donné par le créateur.`;
+
+/** Déroulé de chaque structure : une ligne, envoyée seulement pour la structure utile. */
+const STRUCTURE_GUIDE: Record<Exclude<Structure, "auto">, string> = {
+  probleme: "douleur du spectateur → pourquoi ça arrive → solution → exemple → action",
+  liste: "promesse chiffrée (3 astuces…) → éléments numérotés, le plus surprenant d'abord → action",
+  histoire: "moment fort → contexte → obstacle → déclic → leçon → action",
+  "avant-apres": "le résultat d'abord → la situation avant → les étapes du changement → action",
+  mythe: "idée reçue → pourquoi c'est faux → ce qui marche vraiment → action",
+  tuto: "résultat final → étapes courtes et numérotées → erreur à éviter → action",
+};
+const TONE_GUIDE: Record<Exclude<Tone, "auto">, string> = {
+  direct: "direct : phrases sèches, verbes d'action",
+  drole: "drôle : autodérision, exagération, une chute",
+  inspirant: "inspirant : images fortes, rythme qui monte",
+  expert: "expert : mots précis, un conseil applicable par scène",
+  calme: "posé : doux, rassurant, sans injonction",
+};
 
 // Ce que l'IA renvoie : clés courtes et ids de fichiers courts (f1, f2…) pour économiser les jetons.
 const aiDirectionShape = {
@@ -37,11 +59,15 @@ const aiDirectionShape = {
   onScreen: z.string().max(60).nullable(),
   character: z.object({ file: z.string(), talking: z.boolean() }).nullable(),
   emphasis: z.array(z.string()).max(3),
+  search: z.string().max(60),
+  art: z.enum(["stock", "ai"]),
 };
 const aiScriptSchema = z.object({
   title: z.string().max(80),
+  structure: z.enum(STRUCTURES),
   pace: z.enum(PACES),
   music: z.string().nullable(),
+  mood: z.enum(MUSIC_MOODS).nullable(),
   scenes: z
     .array(z.object({ text: z.string(), visual: z.string().max(120), ...aiDirectionShape }))
     .min(1)
@@ -64,13 +90,15 @@ function shortIds(assets: AssetSummary[]) {
   };
 }
 
-const DIRECTION_RULES = `Pour chaque scène :
-- files : fichiers à montrer (ids f…), vidéos/images seulement, 2 si la scène dure plus de 4 s et qu'il y en a assez ; [] si aucun ne colle.
-- bg : fond animé généré quand files est vide ou derrière un personnage (aurore, nuit, particules, degrade).
-- fx : 1 à 2 effets (zoom-in, zoom-out, pan, punch = zoom choc sur un mot fort, shake = secousse). Varie d'une scène à l'autre.
-- next : transition vers la scène suivante (cut, fade, slide, zoom, flash, wipe, blur). Surtout des cut pour le rythme, une transition marquée aux changements d'idée.
-- onScreen : texte court à l'écran (5 mots max) seulement s'il aide, sinon null.
-- character : un fichier de type character s'il doit apparaître, talking=true s'il dit le texte ; sinon null.
+const DIRECTION_RULES = `Pour chaque scène (varie tout d'une scène à l'autre) :
+- files : fichiers à montrer (ids f…, vidéos/images), 2 si la scène dure plus de 4 s ; [] si aucun ne colle.
+- art : sans fichier, "stock" si une vraie vidéo existe sûrement en banque (gestes, lieux, objets), "ai" pour une idée abstraite, une métaphore ou une scène impossible à filmer.
+- search : 2 à 4 mots-clés concrets en anglais décrivant l'image voulue.
+- bg : fond animé si files est vide ou derrière un personnage (aurore, nuit, particules, degrade).
+- fx : 1 ou 2 parmi zoom-in, zoom-out, pan, punch (zoom choc sur un mot fort), shake (secousse) ; punch ou shake sur l'accroche.
+- next : transition vers la suivante (cut, fade, slide, zoom, flash, wipe, blur) ; surtout cut, une transition marquée aux changements d'idée.
+- onScreen : texte à l'écran de 5 mots max s'il aide (étape numérotée, mot clé), sinon null.
+- character : un fichier character s'il apparaît, talking=true s'il dit le texte ; sinon null.
 - emphasis : 0 à 2 mots forts tirés du texte dit.`;
 
 type Content = Anthropic.Beta.Messages.BetaContentBlockParam;
@@ -95,6 +123,8 @@ function fromAi(d: AiDirection, long: (f: string) => string | undefined) {
     onScreenText: d.onScreen,
     character: characterId ? { assetId: characterId, talking: !!d.character?.talking } : null,
     emphasis: d.emphasis,
+    search: d.search || null,
+    art: d.art,
   };
 }
 
@@ -108,6 +138,8 @@ function toAi(s: Script["scenes"][number], short: (id: string | null) => string 
     onScreen: s.onScreenText,
     character: character ? { file: character, talking: !!s.character?.talking } : null,
     emphasis: s.emphasis,
+    search: s.search ?? "",
+    art: s.art,
   };
 }
 
@@ -153,25 +185,38 @@ export class AnthropicProvider implements AiProvider {
 
   async generateScript(req: ScriptRequest): Promise<Script> {
     const ids = shortIds(req.assets);
+    const structure = req.structure && req.structure !== "auto" ? req.structure : null;
+    const tone = req.tone && req.tone !== "auto" ? TONE_GUIDE[req.tone] : null;
     const prompt = `Écris le script détaillé d'une vidéo : texte dit, visuels, fonds, effets et transitions. Le montage suivra ce script à la lettre.
 
 Idée du créateur :
 """${req.idea}"""
 
 Format ${req.format}, plateformes : ${req.platforms.join(", ") || "non précisées"}. Durée visée ${req.targetDurationSec} s, soit environ ${Math.round(req.targetDurationSec * 2.6)} mots dits au total.
+${
+  structure
+    ? `Structure imposée (${structure}) : ${STRUCTURE_GUIDE[structure]}.`
+    : `structure : choisis la plus efficace pour cette idée parmi ${Object.entries(STRUCTURE_GUIDE)
+        .map(([k, v]) => `${k} (${v})`)
+        .join(" ; ")}.`
+}
+${tone ? `Ton ${tone}.` : "Ton : celui qui sert le mieux l'idée."}
 
 Fichiers du créateur (à utiliser en priorité) :
 ${describeAssets(req.assets, ids.short)}
 
-3 à 8 scènes. text : 1 à 3 phrases dites. visual : ce qu'on voit, en une phrase.
+${Math.max(3, Math.min(8, Math.round(req.targetDurationSec / 6)))} scènes environ. text : 1 à 3 phrases dites. visual : ce qu'on voit en une phrase, en alternant gros plans, plans larges, mains en action, écrans, lieux.
 ${DIRECTION_RULES}
-pace : calm, normal ou fast. music : un fichier de type music ou null.
+pace : calm, normal ou fast. music : un fichier music ou null ; mood : sans fichier music, ambiance d'une musique libre (upbeat, chill, epic, emotional, corporate, funny) ou null.
 caption : légende de publication (2 phrases max). hashtags : 3 à 5, avec #.`;
     const out = await this.ask(aiScriptSchema, prompt, "medium");
     const script = normalizeScript({
       title: out.title,
       pace: out.pace,
       musicAssetId: out.music ? (ids.long(out.music) ?? null) : null,
+      musicMood: out.mood,
+      structure: structure ?? out.structure,
+      tone: req.tone ?? null,
       caption: out.caption,
       hashtags: out.hashtags,
       scenes: out.scenes.map((s, i) => ({
@@ -181,7 +226,7 @@ caption : légende de publication (2 phrases max). hashtags : 3 à 5, avec #.`;
         ...fromAi(s, ids.long),
       })),
     });
-    return sanitizeScript(script, new Set(req.assets.map((a) => a.id)));
+    return diversifyScript(sanitizeScript(script, new Set(req.assets.map((a) => a.id))));
   }
 
   async reviseScript(req: ReviseRequest): Promise<Script> {

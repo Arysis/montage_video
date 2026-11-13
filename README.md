@@ -37,7 +37,23 @@ vérifie le résultat, puis tu publies ou tu programmes.
 - `src/lib/plan/build.ts` transforme ces indications et la transcription en **plan de montage** : chaque coupe tombe
   sur un mot, les scènes longues sont découpées en plans courts.
 - `src/lib/render/ffmpeg.ts` traduit le plan en une seule commande FFmpeg : plans, zooms, logo, sous-titres ASS
-  (polices du Brand Kit), voix nettoyée, musique qui baisse sous la voix, volume normalisé à -14 LUFS.
+  (polices du Brand Kit), voix nettoyée, musique qui baisse sous la voix, bruitages synthétisés (souffle sur les
+  transitions, impact sur les zooms chocs), volume normalisé à -14 LUFS.
+
+### Visuels, musique et DA sans fichier du créateur
+
+Chaque source est facultative : elle n'est utilisée que si sa clé est dans `APP_ENV` (voir `.env.example`).
+
+| Besoin                                        | Source                                      | Clé                                   | Licence                                 |
+| --------------------------------------------- | ------------------------------------------- | ------------------------------------- | --------------------------------------- |
+| Vraies vidéos et photos                       | Pexels, Pixabay                             | gratuites                             | libres, sans crédit obligatoire         |
+| Photos de repli                               | Openverse                                   | aucune                                | CC0 / domaine public                    |
+| Images IA (idée abstraite, ou rien en banque) | Cloudflare Workers AI, fal.ai, Pollinations | gratuite / payante à l'usage / aucune | images générées                         |
+| Musique selon l'ambiance du script            | Jamendo, Freesound                          | gratuites                             | CC BY (crédit ajouté à la légende), CC0 |
+
+Le script choisit pour chaque scène sans fichier `art: "stock"` ou `"ai"`, et une ambiance `musicMood`. Le
+Brand Kit a un assistant de DA (`src/lib/brand-assistant.ts`) qui calcule trois propositions lisibles (contrastes
+WCAG) par ambiance, sans appel à l'IA. Polices fournies : voir `assets/fonts/LICENCES.md`.
 
 ### Le contrôle qualité (11 tests)
 

@@ -24,6 +24,7 @@ export type Directions = {
   musicVolumeDb: number;
   pace: "calm" | "normal" | "fast";
   subtitles: boolean;
+  soundEffects: boolean;
 };
 
 export function directionsFromScript(script: Script): Directions {
@@ -32,6 +33,7 @@ export function directionsFromScript(script: Script): Directions {
     musicAssetId: script.musicAssetId,
     musicVolumeDb: script.musicVolumeDb,
     subtitles: script.subtitles.enabled,
+    soundEffects: script.soundEffects,
     scenes: script.scenes.map((s) => ({
       sceneId: s.id,
       assetIds: s.visuals,

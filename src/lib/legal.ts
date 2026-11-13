@@ -40,7 +40,7 @@ export const LEGAL_PAGES: LegalPage[] = [
         paragraphs: [
           `Le nom ${APP}, le logo, l'interface et le code du site appartiennent à l'éditeur. Toute reproduction sans autorisation écrite est interdite.`,
           "Les vidéos, fichiers et textes importés ou créés par les utilisateurs restent leur propriété. Voir les CGV.",
-          "Les polices Bricolage Grotesque et IBM Plex Sans sont utilisées sous licence SIL Open Font License 1.1.",
+          "Les polices Bricolage Grotesque, IBM Plex Sans, Anton, Bebas Neue, Archivo Black, DM Serif Display, Abril Fatface et Poppins sont utilisées sous licence SIL Open Font License 1.1, Luckiest Guy sous licence Apache 2.0.",
         ],
       },
       {

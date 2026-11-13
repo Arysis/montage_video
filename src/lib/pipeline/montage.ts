@@ -35,14 +35,16 @@ import { checkPlatforms, checkReadability, contrastRatio } from "@/lib/qc/rules"
 import { blocksPublication, type QcCheck, type QcReport } from "@/lib/qc/types";
 import { cleanVoice } from "@/lib/audio/voice";
 import { buildAss } from "@/lib/render/ass";
-import { buildFfmpegArgs, run } from "@/lib/render/ffmpeg";
+import { type BackgroundFiles, backgroundKey, renderBackground } from "@/lib/render/backgrounds";
+import { buildFfmpegArgs, buildSfxTrackArgs, run } from "@/lib/render/ffmpeg";
 import { normalizeScript, type Script } from "@/lib/script/schema";
+import { addAutoMusic, illustrateScript } from "@/lib/stock";
+import { isBuiltInFont } from "@/lib/fonts";
 import { storage } from "@/lib/storage";
 import { checksRenderedSync, isEstimatedTranscript, isRealStt, stt } from "@/lib/stt";
 import type { MontageJob } from "@/lib/jobs";
 
 export const MAX_ATTEMPTS = 3;
-const DEFAULT_FONTS = ["Bricolage Grotesque", "IBM Plex Sans"];
 
 async function setProgress(
   projectId: string,
@@ -244,6 +246,43 @@ export async function doMontage(project: Project, job: MontageJob) {
         sceneId: job.sceneId,
       });
       await db().update(schema.projects).set({ script }).where(eq(schema.projects.id, project.id));
+    }
+    // Scènes sans fichier : on cherche des plans libres de droits qui montrent ce qui est dit.
+    await setProgress(project.id, 11, "Recherche des images de chaque scène");
+    const before = JSON.stringify(script.scenes.map((s) => s.visuals));
+    const illustrated = await illustrateScript({
+      userId: project.userId,
+      script,
+      orientation:
+        project.format === "9:16" ? "portrait" : project.format === "16:9" ? "landscape" : "square",
+      work: path.join(work, "stock"),
+    }).catch((err) => {
+      console.error("[stock]", err);
+      return { script, added: [] as Asset[] };
+    });
+    if (JSON.stringify(illustrated.script.scenes.map((s) => s.visuals)) !== before) {
+      script = illustrated.script;
+      assets.push(...illustrated.added.filter((a) => !assets.some((x) => x.id === a.id)));
+      await db().update(schema.projects).set({ script }).where(eq(schema.projects.id, project.id));
+    }
+    // Musique libre selon l'ambiance du script, si le créateur n'a pas choisi de fichier.
+    if (!script.musicAssetId && script.musicMood) {
+      await setProgress(project.id, 13, "Recherche d'une musique libre");
+      const music = await addAutoMusic({
+        userId: project.userId,
+        script,
+        minSec: take.durationSec,
+        seed: [...project.id].reduce((n, c) => n + c.charCodeAt(0), 0),
+        work: path.join(work, "music"),
+      }).catch((err) => {
+        console.error("[musique]", err);
+        return { script, added: null };
+      });
+      if (music.added) {
+        script = music.script;
+        if (!assets.some((x) => x.id === music.added!.id)) assets.push(music.added);
+        await db().update(schema.projects).set({ script }).where(eq(schema.projects.id, project.id));
+      }
     }
     let directions: Directions = directionsFromScript(script);
 
@@ -571,9 +610,7 @@ export async function renderPlan(
       await copyFile(path.join(path.resolve(e.FONTS_DIR), f), path.join(fontsDir, f));
   }
   const wanted = new Set(
-    [plan.brand.titleFont, plan.brand.bodyFont, plan.subtitles.font].filter(
-      (f) => !DEFAULT_FONTS.includes(f),
-    ),
+    [plan.brand.titleFont, plan.brand.bodyFont, plan.subtitles.font].filter((f) => !isBuiltInFont(f)),
   );
   if (wanted.size) {
     const userId = opts.assets[0]?.userId;
@@ -598,11 +635,42 @@ export async function renderPlan(
       await prepareCharacter(rig, files, path.join(opts.work, `character-${id}`), opts.scale),
     );
   }
+  // Fonds animés : images dessinées une fois par fond, à la taille du rendu.
+  const backgrounds = new Map<string, BackgroundFiles>();
+  const bgDir = path.join(opts.work, "backgrounds");
+  await mkdir(bgDir, { recursive: true });
+  const W = Math.round((plan.width * (opts.scale ?? 1)) / 2) * 2;
+  const H = Math.round((plan.height * (opts.scale ?? 1)) / 2) * 2;
+  for (const scene of plan.scenes) {
+    if (scene.visual.type !== "generated") continue;
+    const key = backgroundKey(scene.visual);
+    if (!backgrounds.has(key)) backgrounds.set(key, await renderBackground(scene.visual, W, H, bgDir));
+  }
   const assPath = path.join(opts.work, "subtitles.ass");
   await writeFile(assPath, buildAss(plan, { watermarkText: `Fait avec ${e.APP_NAME}` }));
+  // Bruitages : piste préparée à part (quelques dixièmes de seconde).
+  const sfxPath = path.join(opts.work, "sfx.wav");
+  const sfxArgs = buildSfxTrackArgs(plan, sfxPath);
+  const sfxReady = sfxArgs
+    ? await run(e.FFMPEG_PATH, sfxArgs, { timeoutMs: 60_000 }).then(
+        () => true,
+        (err) => {
+          console.error("[bruitages]", err instanceof Error ? err.message : err);
+          return false;
+        },
+      )
+    : false;
   const args = buildFfmpegArgs(
     plan,
-    { assets: media, voicePath: opts.voiceFile, assPath, fontsDir, characters },
+    {
+      assets: media,
+      voicePath: opts.voiceFile,
+      assPath,
+      fontsDir,
+      characters,
+      backgrounds,
+      sfxPath: sfxReady ? sfxPath : null,
+    },
     opts.out,
     {
       preset: "veryfast",
