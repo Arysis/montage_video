@@ -1,5 +1,4 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, statSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -101,15 +100,13 @@ describe("bruitages", () => {
     expect(sfx.filter((x) => x.kind === "hit")).toHaveLength(1);
   });
 
-  it("les synthétise à part avec des filtres présents dans FFmpeg 5.1, puis les mélange", () => {
+  it("prépare la piste à part, puis la mélange", () => {
     const plan = samplePlan();
     const dir = mkdtempSync(path.join(tmpdir(), "sfx-"));
     const track = path.join(dir, "sfx.wav");
     const sfxArgs = buildSfxTrackArgs(plan, track)!;
     expect(sfxArgs.some((a) => a.startsWith("anoisesrc="))).toBe(true);
-    // La piste se fabrique vraiment, et vite (pas de blocage du graphe).
-    execFileSync("ffmpeg", sfxArgs, { timeout: 20_000 });
-    expect(statSync(track).size).toBeGreaterThan(1000);
+    // Fabrication réelle par FFmpeg : voir tests/integration/stock.test.ts.
     expect(buildSfxTrackArgs({ ...plan, sfx: [] }, track)).toBeNull();
     const args = buildFfmpegArgs(
       plan,

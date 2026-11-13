@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -13,7 +13,9 @@ import {
   type MusicProvider,
   type StockProvider,
 } from "@/lib/stock";
+import { buildSfxTrackArgs } from "@/lib/render/ffmpeg";
 import { normalizeScript } from "@/lib/script/schema";
+import { samplePlan } from "../helpers/fixtures";
 import { makeImage, setupIntegration } from "./setup";
 
 let root = "";
@@ -216,5 +218,13 @@ describe("illustration des scènes sans fichier", () => {
       providers: [provider],
     });
     expect(kept.added).toBeNull();
+  });
+
+  it("fabrique vite la piste des bruitages avec des filtres de FFmpeg 5.1", () => {
+    const track = path.join(root, "sfx.wav");
+    const args = buildSfxTrackArgs(samplePlan(), track)!;
+    // Délai court : un graphe bloqué ferait échouer le test au lieu de le figer.
+    execFileSync("ffmpeg", args, { timeout: 20_000 });
+    expect(statSync(track).size).toBeGreaterThan(1000);
   });
 });
