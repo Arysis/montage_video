@@ -6,7 +6,13 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { closeDb, db, schema } from "@/lib/db";
-import { illustrateScript, type StockProvider } from "@/lib/stock";
+import {
+  addAutoMusic,
+  type ImageGenerator,
+  illustrateScript,
+  type MusicProvider,
+  type StockProvider,
+} from "@/lib/stock";
 import { normalizeScript } from "@/lib/script/schema";
 import { makeImage, setupIntegration } from "./setup";
 
@@ -117,5 +123,98 @@ describe("illustration des scènes sans fichier", () => {
       providers: [{ name: "openverse", search: () => Promise.reject(new Error("hors ligne")) }],
     });
     expect(res.script.scenes[0]!.visuals).toEqual([]);
+  });
+
+  it("crée une image IA quand le script le demande ou que les banques ne trouvent rien", async () => {
+    const png = readFileSync(makeImage(root, "0x2244aa"));
+    const prompts: string[] = [];
+    const generator: ImageGenerator = {
+      name: "pollinations",
+      generate: async (prompt, _o, seed) => {
+        prompts.push(prompt);
+        return {
+          source: "pollinations",
+          id: `g${seed}`,
+          kind: "image",
+          url: "",
+          data: png,
+          width: 768,
+          height: 1344,
+          durationSec: null,
+          credit: "Image IA (Flux, Pollinations)",
+        };
+      },
+    };
+    const stockQueries: string[] = [];
+    const script = normalizeScript({
+      title: "x",
+      scenes: [
+        { id: "s1", text: "Ta motivation est une flamme.", art: "ai", search: "glowing flame heart" },
+        { id: "s2", text: "Rien en banque.", search: "nothing" },
+      ],
+    });
+    const res = await illustrateScript({
+      userId,
+      script,
+      orientation: "portrait",
+      work: path.join(root, "w"),
+      providers: [{ name: "openverse", search: async (q) => (stockQueries.push(q), []) }],
+      generators: [generator],
+      maxAiImages: 6,
+    });
+    // Scène 1 : l'IA d'abord, sans chercher en banque. Scène 2 : banque vide, puis l'IA.
+    expect(stockQueries).toEqual(["nothing"]);
+    expect(prompts[0]).toContain("glowing flame heart");
+    expect(res.added).toHaveLength(2);
+    expect(res.added[0]).toMatchObject({ kind: "image", rights: "free", mime: "image/jpeg" });
+    expect(res.added[0]!.description).toContain("Image IA");
+    expect(res.script.scenes.every((sc) => sc.visuals.length === 1)).toBe(true);
+  });
+
+  it("ajoute une musique libre selon l'ambiance, avec son crédit dans la légende", async () => {
+    const provider: MusicProvider = {
+      name: "jamendo",
+      search: async (mood) => {
+        expect(mood).toBe("upbeat");
+        return [
+          {
+            source: "jamendo",
+            id: "42",
+            url: `${base}/m.mp3`,
+            durationSec: 120,
+            title: "Run",
+            artist: "Bea",
+            attribution: "Musique : « Run » par Bea (CC BY, Jamendo)",
+          },
+        ];
+      },
+    };
+    const script = normalizeScript({
+      title: "x",
+      caption: "Regarde ça.",
+      musicMood: "upbeat",
+      scenes: [{ id: "s1", text: "Bonjour." }],
+    });
+    const res = await addAutoMusic({
+      userId,
+      script,
+      minSec: 20,
+      seed: 3,
+      work: path.join(root, "w"),
+      providers: [provider],
+    });
+    expect(res.added).toMatchObject({ kind: "music", name: "jamendo-42.mp3", rights: "free" });
+    expect(res.script.musicAssetId).toBe(res.added!.id);
+    expect(res.script.caption).toBe("Regarde ça.\n\nMusique : « Run » par Bea (CC BY, Jamendo)");
+    // Un fichier musique déjà choisi n'est jamais remplacé.
+    const kept = await addAutoMusic({
+      userId,
+      script: { ...script, musicAssetId: "mien" },
+      minSec: 20,
+      seed: 3,
+      work: path.join(root, "w"),
+      providers: [provider],
+    });
+    expect(kept.added).toBeNull();
   });
 });

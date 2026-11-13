@@ -67,6 +67,21 @@ const schema = z.object({
   PEXELS_API_KEY: z.string().optional(),
   PIXABAY_API_KEY: z.string().optional(),
 
+  // Images créées par IA pour les scènes sans vraie vidéo qui colle (dans cet ordre, chacune
+  // seulement si sa clé est là ; Pollinations marche sans clé). Vide : aucune image IA.
+  AI_IMAGE_PROVIDERS: z.string().default("cloudflare,fal,pollinations"),
+  CLOUDFLARE_ACCOUNT_ID: z.string().optional(),
+  CLOUDFLARE_API_TOKEN: z.string().optional(),
+  FAL_KEY: z.string().optional(),
+  POLLINATIONS_TOKEN: z.string().optional(),
+  /** Nombre maximal d'images IA par vidéo. */
+  AI_IMAGES_PER_VIDEO: z.coerce.number().int().min(0).max(12).default(6),
+
+  // Musique libre trouvée selon l'ambiance du script (clés gratuites).
+  MUSIC_PROVIDERS: z.string().default("jamendo,freesound"),
+  JAMENDO_CLIENT_ID: z.string().optional(),
+  FREESOUND_API_KEY: z.string().optional(),
+
   MAX_UPLOAD_MB: z.coerce.number().int().positive().default(500),
   FFMPEG_PATH: z.string().default("ffmpeg"),
   FFPROBE_PATH: z.string().default("ffprobe"),

@@ -16,6 +16,9 @@ import {
   type Script,
   TRANSITION_LABELS,
   TRANSITIONS,
+  MUSIC_MOOD_LABELS,
+  MUSIC_MOODS,
+  STRUCTURE_LABELS,
 } from "@/lib/script/schema";
 import { FormError, FormSuccess } from "./FormMessage";
 import { TopBar } from "./TopBar";
@@ -103,6 +106,7 @@ export function ScriptEditor({
           effects: ["zoom-in"],
           transition: "cut",
           character: null,
+          art: "stock",
           search: null,
           emphasis: [],
         },
@@ -294,8 +298,30 @@ export function ScriptEditor({
 
                     {sc.visuals.length === 0 && (
                       <div className="field">
+                        <span className="label">Sans fichier, montrer</span>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                          {(
+                            [
+                              ["stock", "Une vraie vidéo ou photo libre"],
+                              ["ai", "Une image créée par l'IA"],
+                            ] as const
+                          ).map(([v, label]) => (
+                            <label key={v} className="option">
+                              <input
+                                type="radio"
+                                name={`${id}-art`}
+                                className="sr-only"
+                                checked={sc.art === v}
+                                onChange={() => updateScene(i, { art: v })}
+                              />
+                              {label}
+                            </label>
+                          ))}
+                        </div>
                         <label htmlFor={`${id}-search`} className="label">
-                          Recherche d&apos;images libres de droits
+                          {sc.art === "ai"
+                            ? "Ce que l'image doit montrer"
+                            : "Recherche d'images libres de droits"}
                         </label>
                         <input
                           id={`${id}-search`}
@@ -452,6 +478,9 @@ export function ScriptEditor({
               onChange={(e) => update({ title: e.target.value })}
             />
           </div>
+          {script.structure && script.structure !== "auto" && (
+            <p className="caption muted">Structure : {STRUCTURE_LABELS[script.structure]}</p>
+          )}
           <div className={s.meter}>
             <span className="muted">Durée estimée</span>
             <span className="tabular">
@@ -485,7 +514,7 @@ export function ScriptEditor({
               value={script.musicAssetId ?? ""}
               onChange={(e) => update({ musicAssetId: e.target.value || null })}
             >
-              <option value="">Aucune</option>
+              <option value="">{music.length ? "Aucun de mes fichiers" : "Aucun fichier musique"}</option>
               {music.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name}
@@ -493,6 +522,35 @@ export function ScriptEditor({
               ))}
             </select>
           </div>
+          {!script.musicAssetId && (
+            <div className="field">
+              <label htmlFor="music-mood" className="label">
+                Musique libre de droits
+              </label>
+              <select
+                id="music-mood"
+                className="select"
+                value={script.musicMood ?? ""}
+                onChange={(e) => update({ musicMood: (e.target.value || null) as Script["musicMood"] })}
+              >
+                <option value="">Pas de musique</option>
+                {MUSIC_MOODS.map((m) => (
+                  <option key={m} value={m}>
+                    {MUSIC_MOOD_LABELS[m]}
+                  </option>
+                ))}
+              </select>
+              <p className="help">Trouvée automatiquement au montage, ajoutée à ta bibliothèque.</p>
+            </div>
+          )}
+          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={script.soundEffects}
+              onChange={(e) => update({ soundEffects: e.target.checked })}
+            />
+            Bruitages discrets (transitions, zooms chocs)
+          </label>
           <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <input
               type="checkbox"

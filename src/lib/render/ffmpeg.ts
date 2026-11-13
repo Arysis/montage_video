@@ -1,7 +1,14 @@
 import { spawn } from "node:child_process";
 import { characterInputArgs, characterOverlay, mergeIntervals } from "@/lib/character/render";
-import type { EditPlan, Motion, PlanScene } from "@/lib/plan/schema";
+import { type EditPlan, type Motion, type PlanScene, SFX_KINDS, type SfxKind } from "@/lib/plan/schema";
 import { BG_MARGIN, type BackgroundFiles, backgroundKey } from "./backgrounds";
+
+/** Sources lavfi des bruitages (0,45 s de souffle, 0,4 s d'impact), volume déjà dosé. */
+const SFX_SOURCES: Record<SfxKind, string> = {
+  whoosh:
+    "anoisesrc=d=0.45:c=pink:a=0.6:r=48000,highpass=f=500,lowpass=f=4500,afade=t=in:d=0.3:curve=qsin,afade=t=out:st=0.3:d=0.15,volume=-14dB",
+  hit: "aevalsrc='0.9*sin(2*PI*(45+140*exp(-t*28))*t)*exp(-t*9)':d=0.4:s=48000,volume=-9dB",
+};
 
 export type ResolvedMedia = {
   /** Chemin local de chaque asset du plan (vidéo, image, musique, logo en PNG). */
@@ -13,6 +20,8 @@ export type ResolvedMedia = {
   characters?: Map<string, string>;
   /** Images des fonds animés (par backgroundKey), dessinées avant le rendu. */
   backgrounds?: Map<string, BackgroundFiles>;
+  /** Piste des bruitages, préparée par buildSfxTrackArgs. */
+  sfxPath?: string | null;
 };
 
 export type RenderOptions = { preset?: string; crf?: number; scale?: number };
@@ -335,6 +344,16 @@ export function buildFfmpegArgs(
       inputIndex++;
     }
   }
+  // Bruitages (souffle sur les transitions, impact sur les zooms chocs). La piste est préparée à part (buildSfxTrackArgs) : mélangée ici dans le même graphe, la
+  // chaîne asplit/adelay/amix des bruitages bloque FFmpeg indéfiniment.
+  let sfxLabel: string | null = null;
+  if (media.sfxPath && plan.sfx?.length) {
+    args.push("-i", media.sfxPath);
+    filters.push(`[${inputIndex}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[sfx]`);
+    sfxLabel = "sfx";
+    inputIndex++;
+  }
+
   if (voiceLabel && musicLabel) {
     if (plan.music?.duckUnderVoice) {
       filters.push(`[voice]asplit=2[voicemix][voicekey]`);
@@ -350,8 +369,13 @@ export function buildFfmpegArgs(
     filters.push(`[${inputIndex}:a]anull[mix]`);
     inputIndex++;
   }
+  let mixLabel = "mix";
+  if (sfxLabel) {
+    filters.push(`[mix][${sfxLabel}]amix=inputs=2:normalize=0:duration=first[mixfx]`);
+    mixLabel = "mixfx";
+  }
   filters.push(
-    `[mix]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,apad,atrim=0:${D}[aout]`,
+    `[${mixLabel}]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,apad,atrim=0:${D}[aout]`,
   );
 
   args.push(
@@ -385,6 +409,39 @@ export function buildFfmpegArgs(
     "+faststart",
     outPath,
   );
+  return args;
+}
+
+/**
+ * Commande FFmpeg qui fabrique la piste des bruitages (WAV) : chaque son est synthétisé
+ * (aucun fichier, aucune clé) puis placé à son instant. Null si le plan n'en a pas.
+ */
+export function buildSfxTrackArgs(plan: EditPlan, out: string): string[] | null {
+  const sfx = (plan.sfx ?? []).filter((x) => x.at < plan.durationSec - 0.1);
+  if (!sfx.length) return null;
+  const args = ["-y", "-hide_banner", "-loglevel", "error", "-nostdin"];
+  const filters: string[] = [];
+  const delayed: string[] = [];
+  let input = 0;
+  for (const kind of SFX_KINDS) {
+    const list = sfx.filter((x) => x.kind === kind);
+    if (!list.length) continue;
+    args.push("-f", "lavfi", "-i", SFX_SOURCES[kind]);
+    const outs = list.map((_, j) => `${kind}${j}`);
+    filters.push(
+      `[${input}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asplit=${list.length}${outs.map((o) => `[${o}s]`).join("")}`,
+    );
+    list.forEach((x, j) => {
+      const ms = Math.round(x.at * 1000);
+      filters.push(`[${outs[j]}s]adelay=${ms}|${ms}[${outs[j]}]`);
+      delayed.push(outs[j]!);
+    });
+    input++;
+  }
+  filters.push(
+    `${delayed.map((d) => `[${d}]`).join("")}amix=inputs=${delayed.length}:normalize=0:duration=longest[out]`,
+  );
+  args.push("-filter_complex", filters.join(";"), "-map", "[out]", "-c:a", "pcm_s16le", "-ar", "48000", out);
   return args;
 }
 

@@ -40,6 +40,42 @@ export const TRANSITION_LABELS: Record<Transition, string> = {
   blur: "Flou",
 };
 
+/** Ambiance de la musique trouvée automatiquement quand le créateur n'en fournit pas. */
+export const MUSIC_MOODS = ["upbeat", "chill", "epic", "emotional", "corporate", "funny"] as const;
+export type MusicMood = (typeof MUSIC_MOODS)[number];
+export const MUSIC_MOOD_LABELS: Record<MusicMood, string> = {
+  upbeat: "Entraînante",
+  chill: "Calme et douce",
+  epic: "Épique",
+  emotional: "Émouvante",
+  corporate: "Pro et positive",
+  funny: "Légère et drôle",
+};
+
+/** Structures de vidéo courte que l'IA choisit selon l'idée (ou que le créateur impose). */
+export const STRUCTURES = ["auto", "probleme", "liste", "histoire", "avant-apres", "mythe", "tuto"] as const;
+export type Structure = (typeof STRUCTURES)[number];
+export const STRUCTURE_LABELS: Record<Structure, string> = {
+  auto: "L'IA choisit",
+  probleme: "Problème → solution",
+  liste: "Liste (3 astuces…)",
+  histoire: "Histoire vécue",
+  "avant-apres": "Avant / après",
+  mythe: "Idée reçue démontée",
+  tuto: "Tuto pas à pas",
+};
+
+export const TONES = ["auto", "direct", "drole", "inspirant", "expert", "calme"] as const;
+export type Tone = (typeof TONES)[number];
+export const TONE_LABELS: Record<Tone, string> = {
+  auto: "L'IA choisit",
+  direct: "Direct et percutant",
+  drole: "Drôle",
+  inspirant: "Inspirant",
+  expert: "Expert et précis",
+  calme: "Posé et bienveillant",
+};
+
 export const PACES = ["calm", "normal", "fast"] as const;
 export const PACE_LABELS: Record<(typeof PACES)[number], string> = {
   calm: "Posé",
@@ -70,6 +106,11 @@ export const sceneScriptSchema = z.object({
   search: z.string().max(80).nullable().default(null),
   /** Mots forts : zoom choc au moment où ils sont dits, mis en avant dans les sous-titres. */
   emphasis: z.array(z.string()).max(4).default([]),
+  /**
+   * Sans fichier : « stock » cherche une vraie vidéo ou photo libre de droits, « ai » génère une
+   * image (idée abstraite, métaphore, chose introuvable en banque).
+   */
+  art: z.enum(["stock", "ai"]).default("stock"),
 });
 
 export const scriptSchema = z.object({
@@ -80,6 +121,14 @@ export const scriptSchema = z.object({
   pace: z.enum(PACES).default("normal"),
   musicAssetId: z.string().nullable().default(null),
   musicVolumeDb: z.number().min(-40).max(-6).default(-20),
+  /** Sans fichier musique : ambiance de la musique libre à trouver (null : pas de musique). */
+  musicMood: z.enum(MUSIC_MOODS).nullable().default(null),
+  /** Bruitages discrets sur les transitions et les zooms chocs. */
+  soundEffects: z.boolean().default(true),
+  /** Structure retenue par l'IA (affichée au créateur). */
+  structure: z.enum(STRUCTURES).nullable().default(null),
+  /** Ton demandé par le créateur (gardé pour réécrire le script dans le même esprit). */
+  tone: z.enum(TONES).nullable().default(null),
   subtitles: z.object({ enabled: z.boolean() }).default({ enabled: true }),
   /** Date de validation par le créateur (ISO), null tant que le script n'est pas validé. */
   validatedAt: z.string().nullable().default(null),
@@ -146,4 +195,29 @@ export function sanitizeScript(script: Script, knownAssetIds: Set<string>): Scri
       };
     }),
   };
+}
+
+/**
+ * Garantit un montage varié sans rappeler l'IA : pas deux scènes de suite avec les mêmes effets,
+ * le même fond ou la même transition marquée, et une accroche qui frappe (zoom choc ou secousse).
+ */
+export function diversifyScript(script: Script): Script {
+  const scenes = script.scenes.map((s) => ({ ...s, effects: [...s.effects] }));
+  scenes.forEach((s, i) => {
+    const prev = scenes[i - 1];
+    if (i === 0 && !s.effects.some((e) => e === "punch" || e === "shake")) {
+      s.effects = [...s.effects.slice(0, 2), s.emphasis.length ? "punch" : "shake"];
+    }
+    if (!prev) return;
+    if (s.effects.join() === prev.effects.join()) {
+      const alt = EFFECTS.find((e) => !prev.effects.includes(e) && e !== "shake") ?? "pan";
+      s.effects = [alt, ...s.effects.filter((e) => e === "punch")].slice(0, 3);
+    }
+    if (s.background === prev.background && !s.visuals.length && !prev.visuals.length) {
+      s.background =
+        BACKGROUND_STYLES[(BACKGROUND_STYLES.indexOf(s.background) + 1) % BACKGROUND_STYLES.length]!;
+    }
+    if (s.transition !== "cut" && s.transition === prev.transition) s.transition = "cut";
+  });
+  return { ...script, scenes };
 }

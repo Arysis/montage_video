@@ -1,9 +1,11 @@
 "use client";
 
-import { Plus, UploadSimple, X } from "@phosphor-icons/react";
+import { MagicWand, Plus, UploadSimple, X } from "@phosphor-icons/react";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { type BrandKitInput, saveBrandKit } from "@/app/actions/assets";
+import { type BrandProposal, MOOD_LABELS, MOODS, type Mood, proposeBrandKits } from "@/lib/brand-assistant";
+import { BUILT_IN_FONTS, BUILT_IN_FAMILIES } from "@/lib/fonts";
 import { contrastRatio } from "@/lib/qc/rules";
 import { FormError, FormSuccess } from "./FormMessage";
 import { TopBar } from "./TopBar";
@@ -15,7 +17,6 @@ type Image = { id: string; name: string; thumbKey: string | null };
 type Font = { id: string; name: string; family: string | null; storageKey: string; mime: string };
 type Slot = "logoAssetId" | "logoDarkAssetId";
 
-const BUILT_IN_FONTS = ["Bricolage Grotesque", "IBM Plex Sans"];
 const STYLES = [
   { value: "boxed", label: "Encadré", help: "Bandeau sombre derrière le texte" },
   { value: "outline", label: "Contour", help: "Texte seul avec un contour" },
@@ -41,6 +42,9 @@ export function BrandKitEditor({
   const [msg, setMsg] = useState<{ error?: string; ok?: string }>({});
   const [pending, startTransition] = useTransition();
   const [slot, setSlot] = useState<Slot | null>(null);
+  const [mood, setMood] = useState<Mood | null>(null);
+  const [baseColor, setBaseColor] = useState<string | null>(null);
+  const proposals = mood ? proposeBrandKits(mood, baseColor) : [];
   const dialog = useRef<HTMLDialogElement>(null);
   const logoInput = useRef<HTMLInputElement>(null);
   const fontInput = useRef<HTMLInputElement>(null);
@@ -61,9 +65,13 @@ export function BrandKitEditor({
   });
 
   const fontOptions = [
-    ...BUILT_IN_FONTS,
-    ...fonts.filter((f) => f.family && !BUILT_IN_FONTS.includes(f.family)).map((f) => f.family as string),
+    ...BUILT_IN_FAMILIES,
+    ...fonts.filter((f) => f.family && !BUILT_IN_FAMILIES.includes(f.family)).map((f) => f.family as string),
   ];
+  const fontLabel = (f: string) => {
+    const known = BUILT_IN_FONTS.find((x) => x.family === f);
+    return known ? `${f} · ${known.label}` : `${f} · importée`;
+  };
   const imageById = new Map(images.map((i) => [i.id, i]));
   const primary = pick(kit.colors, "Principale", kit.colors[0]?.hex ?? "#FF5A36");
   const background = pick(kit.colors, "Fond", "#0E0F11");
@@ -81,6 +89,20 @@ export function BrandKitEditor({
     startTransition(async () => {
       setMsg(await saveBrandKit(kit));
     });
+  };
+
+  const applyProposal = (p: BrandProposal) => {
+    // Les couleurs ajoutées par le créateur au-delà des quatre de base sont gardées.
+    const extra = kit.colors.slice(4);
+    setKit((prev) => ({
+      ...prev,
+      colors: [...p.colors, ...extra],
+      titleFont: p.titleFont,
+      bodyFont: p.bodyFont,
+      subtitleStyle: p.subtitleStyle,
+      subtitlePosition: p.subtitlePosition,
+    }));
+    setMsg({ ok: `DA « ${p.name} » appliquée. Ajuste ce que tu veux puis enregistre.` });
   };
 
   const openPicker = (s: Slot) => {
@@ -116,6 +138,88 @@ export function BrandKitEditor({
               <FormError message={msg.error} />
               <FormSuccess message={msg.ok} />
             </div>
+
+            <section className={styles.section} aria-labelledby="bk-assistant">
+              <h2 id="bk-assistant" className={styles.sectionTitle}>
+                <MagicWand size={20} aria-hidden="true" style={{ verticalAlign: "-3px", marginRight: 6 }} />
+                Crée ta DA en 30 secondes
+              </h2>
+              <p className="help" style={{ marginBottom: 12 }}>
+                Choisis l&apos;ambiance de ta chaîne. On te propose trois directions complètes (couleurs
+                lisibles, polices, sous-titres) que tu peux appliquer puis retoucher.
+              </p>
+              <fieldset className={b.fieldset}>
+                <legend className="label">Ambiance</legend>
+                <div className={b.threeCols}>
+                  {MOODS.map((m) => (
+                    <label key={m} className={`option ${b.styleOption}`}>
+                      <input
+                        type="radio"
+                        name="mood"
+                        className="sr-only"
+                        checked={mood === m}
+                        onChange={() => setMood(m)}
+                      />
+                      <span style={{ fontWeight: 500 }}>{MOOD_LABELS[m].label}</span>
+                      <span className="caption muted">{MOOD_LABELS[m].help}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <div className={b.baseColorRow}>
+                <label
+                  className={b.swatch}
+                  style={{ background: baseColor ?? "transparent", width: 40, height: 40, margin: 0 }}
+                >
+                  <span className="sr-only">Une couleur que tu aimes</span>
+                  <input
+                    type="color"
+                    value={baseColor ?? "#FF5A36"}
+                    onChange={(e) => setBaseColor(e.target.value.toUpperCase())}
+                  />
+                </label>
+                <span className="ui">
+                  {baseColor ? `Partir de ${baseColor}` : "Une couleur que tu aimes déjà ? (facultatif)"}
+                </span>
+                {baseColor && (
+                  <button type="button" className="link link-underline ui" onClick={() => setBaseColor(null)}>
+                    Retirer
+                  </button>
+                )}
+              </div>
+              {proposals.length > 0 && (
+                <ul className={b.proposals}>
+                  {proposals.map((p) => {
+                    const c = Object.fromEntries(p.colors.map((x) => [x.name, x.hex]));
+                    return (
+                      <li key={p.name} className={`card ${b.proposal}`}>
+                        <div className={b.proposalPreview} style={{ background: c.Fond, color: c.Texte }}>
+                          <span style={{ fontFamily: `"${p.titleFont}"`, fontSize: 26, lineHeight: 1.1 }}>
+                            {p.name}
+                          </span>
+                          <span style={{ fontFamily: `"${p.bodyFont}"`, fontSize: 14 }}>
+                            Ton message <span style={{ color: c.Principale, fontWeight: 600 }}>clé</span> ici
+                          </span>
+                        </div>
+                        <div className={b.proposalSwatches} aria-hidden="true">
+                          {p.colors.map((x) => (
+                            <span key={x.name} style={{ background: x.hex }} title={`${x.name} ${x.hex}`} />
+                          ))}
+                        </div>
+                        <p className="caption muted">{p.why}</p>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => applyProposal(p)}
+                        >
+                          Appliquer « {p.name} »
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
 
             <section className={styles.section} aria-labelledby="bk-logo">
               <h2 id="bk-logo" className={styles.sectionTitle}>
@@ -274,7 +378,7 @@ export function BrandKitEditor({
                     >
                       {fontOptions.map((f) => (
                         <option key={f} value={f}>
-                          {f}
+                          {fontLabel(f)}
                         </option>
                       ))}
                     </select>

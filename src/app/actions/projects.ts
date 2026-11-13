@@ -11,7 +11,7 @@ import { db, schema } from "@/lib/db";
 import { enqueue, QUEUES } from "@/lib/jobs";
 import { linkAssets, needsScriptValidation, ownedProject, projectAssets, usage } from "@/lib/projects";
 import { mainCharacterImages } from "@/lib/character/poses";
-import { normalizeScript, sanitizeScript, scriptSchema } from "@/lib/script/schema";
+import { normalizeScript, sanitizeScript, scriptSchema, STRUCTURES, TONES } from "@/lib/script/schema";
 import { storage } from "@/lib/storage";
 
 export type ActionState = { error?: string; ok?: string } | undefined;
@@ -28,6 +28,8 @@ const ideaSchema = z.object({
     .number()
     .int()
     .refine((n) => [15, 30, 45, 60, 90].includes(n), "Durée invalide."),
+  structure: z.enum(STRUCTURES).catch("auto"),
+  tone: z.enum(TONES).catch("auto"),
 });
 
 function aiError(err: unknown): string {
@@ -46,6 +48,8 @@ export async function createProject(_prev: ActionState, form: FormData): Promise
     format: form.get("format"),
     platforms: form.getAll("platforms"),
     duration: form.get("duration"),
+    structure: form.get("structure") ?? "auto",
+    tone: form.get("tone") ?? "auto",
   });
   if (!parsed.success) return { error: parsed.error.issues[0]!.message };
   const limits = planLimits(user.plan);
@@ -90,6 +94,8 @@ export async function createProject(_prev: ActionState, form: FormData): Promise
       format: parsed.data.format,
       platforms: parsed.data.platforms,
       targetDurationSec: parsed.data.duration,
+      structure: parsed.data.structure,
+      tone: parsed.data.tone,
       assets: assets.map((a) => ({
         id: a.id,
         kind: a.kind,

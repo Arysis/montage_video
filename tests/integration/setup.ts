@@ -20,6 +20,8 @@ export async function setupIntegration() {
     PUBLISH_PROVIDER: "mock",
     EMAIL_PROVIDER: "log",
     STOCK_PROVIDERS: "",
+    AI_IMAGE_PROVIDERS: "",
+    MUSIC_PROVIDERS: "",
   });
   resetEnvCache();
   await runMigrations();

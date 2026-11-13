@@ -5,6 +5,7 @@ import { useActionState, useCallback, useRef, useState } from "react";
 import { createProject } from "@/app/actions/projects";
 import { FormError } from "./FormMessage";
 import styles from "./app.module.css";
+import { STRUCTURE_LABELS, STRUCTURES, TONE_LABELS, TONES } from "@/lib/script/schema";
 import f from "./forms.module.css";
 import { type UploadedAsset, useUpload } from "./useUpload";
 
@@ -33,6 +34,8 @@ type Props = {
     format: string;
     platforms: string[];
     duration: number;
+    structure?: string;
+    tone?: string;
     assets: UploadedAsset[];
   };
 };
@@ -132,23 +135,54 @@ export function NewVideoForm({
             </div>
           </fieldset>
 
-          <div className="field" style={{ maxWidth: 240 }}>
-            <label htmlFor="duration" className="label">
-              Durée visée
-            </label>
-            <select
-              id="duration"
-              name="duration"
-              className="select"
-              value={duration}
-              onChange={(e) => setDuration(Number(e.target.value))}
-            >
-              {DURATIONS.filter((d) => d <= maxDurationSec).map((d) => (
-                <option key={d} value={d}>
-                  {d} s
-                </option>
-              ))}
-            </select>
+          <div className={f.optionsRow}>
+            <div className="field">
+              <label htmlFor="duration" className="label">
+                Durée visée
+              </label>
+              <select
+                id="duration"
+                name="duration"
+                className="select"
+                value={duration}
+                onChange={(e) => setDuration(Number(e.target.value))}
+              >
+                {DURATIONS.filter((d) => d <= maxDurationSec).map((d) => (
+                  <option key={d} value={d}>
+                    {d} s
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="structure" className="label">
+                Structure
+              </label>
+              <select
+                id="structure"
+                name="structure"
+                className="select"
+                defaultValue={initial?.structure ?? "auto"}
+              >
+                {STRUCTURES.map((x) => (
+                  <option key={x} value={x}>
+                    {STRUCTURE_LABELS[x]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="tone" className="label">
+                Ton
+              </label>
+              <select id="tone" name="tone" className="select" defaultValue={initial?.tone ?? "auto"}>
+                {TONES.map((x) => (
+                  <option key={x} value={x}>
+                    {TONE_LABELS[x]}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="field">

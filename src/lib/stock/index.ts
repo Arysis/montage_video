@@ -1,5 +1,5 @@
 import { createWriteStream } from "node:fs";
-import { mkdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -10,6 +10,11 @@ import type { Asset } from "@/lib/db/schema";
 import { env } from "@/lib/env";
 import type { Script } from "@/lib/script/schema";
 import { storage } from "@/lib/storage";
+import { generateImage, type ImageGenerator, imageGenerators } from "./ai-images";
+import { findMusic, type MusicProvider, musicProviders } from "./music";
+
+export { imageGenerators, type ImageGenerator } from "./ai-images";
+export { musicProviders, type MusicProvider, type MusicTrack } from "./music";
 
 /**
  * Banques d'images et de vidéos libres de droits : quand le créateur n'a pas fourni de fichier
@@ -20,10 +25,12 @@ import { storage } from "@/lib/storage";
 export type Orientation = "portrait" | "landscape" | "square";
 
 export type StockItem = {
-  source: "pexels" | "pixabay" | "openverse";
+  source: "pexels" | "pixabay" | "openverse" | "cloudflare" | "fal" | "pollinations";
   id: string;
   kind: "video" | "image";
   url: string;
+  /** Fichier déjà reçu (images IA renvoyées directement), à la place de url. */
+  data?: Buffer;
   width: number;
   height: number;
   durationSec: number | null;
@@ -31,7 +38,7 @@ export type StockItem = {
 };
 
 export interface StockProvider {
-  readonly name: StockItem["source"];
+  readonly name: "pexels" | "pixabay" | "openverse";
   search(query: string, orientation: Orientation): Promise<StockItem[]>;
 }
 
@@ -244,6 +251,8 @@ export function sceneQuery(scene: Script["scenes"][number]): string {
   return scene.text.split(/\s+/).slice(0, 8).join(" ");
 }
 
+const AI_SOURCES = new Set<StockItem["source"]>(["cloudflare", "fal", "pollinations"]);
+
 export const assetNameFor = (item: StockItem) =>
   `${item.source}-${item.id}${item.kind === "video" ? ".mp4" : ".jpg"}`;
 
@@ -279,7 +288,8 @@ export async function importStockItem(
   await mkdir(work, { recursive: true });
   const raw = path.join(work, `stock-${item.source}-${item.id}`);
   try {
-    await download(item.url, raw, 80 * 1024 * 1024);
+    if (item.data) await writeFile(raw, item.data);
+    else await download(item.url, raw, 80 * 1024 * 1024);
     let body: Buffer;
     let width = item.width;
     let height = item.height;
@@ -321,7 +331,10 @@ export async function importStockItem(
         width,
         height,
         thumbKey,
-        description: `Banque libre (${item.source}, ${item.credit}) : ${query}`.slice(0, 300),
+        description: (AI_SOURCES.has(item.source)
+          ? `${item.credit} : ${query}`
+          : `Banque libre (${item.source}, ${item.credit}) : ${query}`
+        ).slice(0, 300),
         analyzedAt: new Date(),
       })
       .returning();
@@ -354,7 +367,9 @@ export async function findStock(
 
 /**
  * Illustre les scènes du script qui n'ont aucun fichier : une à deux vidéos ou photos libres
- * de droits par scène, ajoutées à la bibliothèque et au script (le créateur peut les retirer).
+ * de droits par scène, ou une image créée par IA quand le script le demande (idée abstraite)
+ * ou que les banques ne trouvent rien. Tout est ajouté à la bibliothèque et au script (le
+ * créateur peut les retirer).
  */
 export async function illustrateScript(opts: {
   userId: string;
@@ -362,20 +377,39 @@ export async function illustrateScript(opts: {
   orientation: Orientation;
   work: string;
   providers?: StockProvider[];
+  generators?: ImageGenerator[];
+  maxAiImages?: number;
 }): Promise<{ script: Script; added: Asset[] }> {
   const providers = opts.providers ?? stockProviders();
-  if (!providers.length) return { script: opts.script, added: [] };
+  const generators = opts.generators ?? imageGenerators();
+  let aiLeft = opts.maxAiImages ?? env().AI_IMAGES_PER_VIDEO;
+  if (!providers.length && !generators.length) return { script: opts.script, added: [] };
   const added: Asset[] = [];
   const used = new Set<string>();
+  const broken = new Set<string>();
   const scenes = [];
+  let index = 0;
   for (const scene of opts.script.scenes) {
+    index++;
     if (scene.visuals.length) {
       scenes.push(scene);
       continue;
     }
     const query = sceneQuery(scene);
     const words = scene.text.split(/\s+/).length;
-    const items = await findStock(providers, query, opts.orientation, used, words > 14 ? 2 : 1);
+    const tryAi = async () => {
+      if (aiLeft <= 0 || !generators.length) return [];
+      const subject =
+        [scene.search, scene.visualIntent && !GENERIC.test(scene.visualIntent) ? scene.visualIntent : null]
+          .filter(Boolean)
+          .join(". ") || scene.text;
+      const item = await generateImage(generators, broken, subject, opts.orientation, index * 7919 + words);
+      if (item) aiLeft--;
+      return item ? [item] : [];
+    };
+    let items: StockItem[] = scene.art === "ai" ? await tryAi() : [];
+    if (!items.length) items = await findStock(providers, query, opts.orientation, used, words > 14 ? 2 : 1);
+    if (!items.length && scene.art !== "ai") items = await tryAi();
     const ids: string[] = [];
     for (const item of items) {
       used.add(assetNameFor(item));
@@ -390,4 +424,65 @@ export async function illustrateScript(opts: {
     scenes.push(ids.length ? { ...scene, visuals: ids } : scene);
   }
   return { script: { ...opts.script, scenes }, added };
+}
+
+/**
+ * Musique libre : si le script demande une ambiance et qu'aucun fichier n'est choisi, on trouve
+ * un morceau, on l'ajoute à la bibliothèque et au script, avec son crédit dans la légende.
+ */
+export async function addAutoMusic(opts: {
+  userId: string;
+  script: Script;
+  minSec: number;
+  seed: number;
+  work: string;
+  providers?: MusicProvider[];
+}): Promise<{ script: Script; added: Asset | null }> {
+  const { script } = opts;
+  if (script.musicAssetId || !script.musicMood) return { script, added: null };
+  const providers = opts.providers ?? musicProviders();
+  if (!providers.length) return { script, added: null };
+  const track = await findMusic(providers, script.musicMood, opts.minSec, opts.seed);
+  if (!track) return { script, added: null };
+  const name = `${track.source}-${track.id}.mp3`;
+  const [existing] = await db()
+    .select()
+    .from(schema.assets)
+    .where(and(eq(schema.assets.userId, opts.userId), eq(schema.assets.name, name)));
+  let asset = existing;
+  if (!asset) {
+    await mkdir(opts.work, { recursive: true });
+    const raw = path.join(opts.work, `music-${track.source}-${track.id}.mp3`);
+    try {
+      await download(track.url, raw, 30 * 1024 * 1024);
+      const id = crypto.randomUUID();
+      const key = `u/${opts.userId}/assets/${id}/${name}`;
+      await storage().put(key, await readFile(raw), "audio/mpeg");
+      [asset] = await db()
+        .insert(schema.assets)
+        .values({
+          id,
+          userId: opts.userId,
+          kind: "music",
+          name,
+          mime: "audio/mpeg",
+          sizeBytes: (await stat(raw)).size,
+          storageKey: key,
+          rights: "free",
+          durationSec: track.durationSec,
+          description: (
+            track.attribution ?? `Musique libre CC0 (${track.source}, ${track.artist}) : ${track.title}`
+          ).slice(0, 300),
+          analyzedAt: new Date(),
+        })
+        .returning();
+    } finally {
+      await rm(raw, { force: true });
+    }
+  }
+  const caption =
+    track.attribution && !script.caption.includes(track.attribution)
+      ? `${script.caption}${script.caption ? "\n\n" : ""}${track.attribution}`.slice(0, 2200)
+      : script.caption;
+  return { script: { ...script, musicAssetId: asset!.id, caption }, added: asset! };
 }
