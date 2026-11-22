@@ -16,6 +16,9 @@ export type VideoFormat = keyof typeof FORMATS;
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Couleur hexadécimale attendue (#RRGGBB)");
 
+export const SFX_KINDS = ["whoosh", "hit"] as const;
+export type SfxKind = (typeof SFX_KINDS)[number];
+
 export const MOTIONS = ["none", "zoom-in", "zoom-out", "pan-left", "pan-right"] as const;
 export type Motion = (typeof MOTIONS)[number];
 
@@ -126,6 +129,11 @@ export const editPlanSchema = z
         duckUnderVoice: z.boolean(),
       })
       .nullable(),
+    /** Bruitages (synthétisés au rendu, aucun fichier) : secondes depuis le début de la vidéo. */
+    sfx: z
+      .array(z.object({ at: z.number().min(0), kind: z.enum(SFX_KINDS) }))
+      .max(40)
+      .default([]),
     logo: z
       .object({
         assetId: z.string().uuid(),

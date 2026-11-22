@@ -1,6 +1,14 @@
 import { spawn } from "node:child_process";
 import { characterInputArgs, characterOverlay, mergeIntervals } from "@/lib/character/render";
-import type { EditPlan, Motion, PlanScene } from "@/lib/plan/schema";
+import { type EditPlan, type Motion, type PlanScene, SFX_KINDS, type SfxKind } from "@/lib/plan/schema";
+import { BG_MARGIN, type BackgroundFiles, backgroundKey } from "./backgrounds";
+
+/** Sources lavfi des bruitages (0,45 s de souffle, 0,4 s d'impact), volume déjà dosé. */
+const SFX_SOURCES: Record<SfxKind, string> = {
+  whoosh:
+    "anoisesrc=d=0.45:c=pink:a=0.6:r=48000,highpass=f=500,lowpass=f=4500,afade=t=in:d=0.3:curve=qsin,afade=t=out:st=0.3:d=0.15,volume=-14dB",
+  hit: "aevalsrc='0.9*sin(2*PI*(45+140*exp(-t*28))*t)*exp(-t*9)':d=0.4:s=48000,volume=-9dB",
+};
 
 export type ResolvedMedia = {
   /** Chemin local de chaque asset du plan (vidéo, image, musique, logo en PNG). */
@@ -10,6 +18,10 @@ export type ResolvedMedia = {
   fontsDir: string;
   /** Liste concat des poses de chaque personnage animé (par id de son image principale). */
   characters?: Map<string, string>;
+  /** Images des fonds animés (par backgroundKey), dessinées avant le rendu. */
+  backgrounds?: Map<string, BackgroundFiles>;
+  /** Piste des bruitages, préparée par buildSfxTrackArgs. */
+  sfxPath?: string | null;
 };
 
 export type RenderOptions = { preset?: string; crf?: number; scale?: number };
@@ -32,42 +44,39 @@ export function mixHex(a: string, b: string, t: number): string {
 type Generated = Extract<PlanScene["visual"], { type: "generated" }>;
 
 /**
- * Fond animé aux couleurs de la marque, calculé par FFmpeg (aucun fichier, aucun appel à l'IA).
- * Calculé en basse définition puis agrandi : flou naturel et rendu rapide.
+ * Fond animé aux couleurs de la marque. L'image est dessinée à l'avance (voir backgrounds.ts)
+ * et ne fait que dériver lentement : uniquement des filtres de base (crop, overlay), qui
+ * marchent pareil sur toutes les versions de FFmpeg.
  */
 export function generatedBackground(
   v: Generated,
-  o: { W: number; H: number; fps: number; dur: number; label: string },
-): string[] {
-  const [primary, background, accent = primary] = v.colors as [string, string, string?];
-  const w = Math.max(64, Math.round(o.W / 4));
-  const h = Math.max(64, Math.round(o.H / 4));
+  files: BackgroundFiles | undefined,
+  o: { W: number; H: number; fps: number; dur: number; label: string; nextInput: number },
+): { args: string[]; filters: string[]; inputs: number } {
   const d = o.dur.toFixed(3);
-  const common = `s=${w}x${h}:rate=${o.fps}:duration=${d}:seed=${v.seed}`;
-  const up = `scale=${o.W}:${o.H}:flags=bicubic`;
-  const c = (hex: string) => hex0x(hex);
-  switch (v.style) {
-    case "nuit":
-      return [
-        `gradients=${common}:c0=${c(background)}:c1=${c(mixHex(background, primary, 0.28))}:c2=${c(background)}:c3=${c(mixHex(background, accent, 0.18))}:nb_colors=4:speed=0.015,gblur=sigma=28,${up},noise=c0s=7:allf=t,vignette=PI/5,format=yuv420p[${o.label}]`,
-      ];
-    case "degrade":
-      return [
-        `gradients=${common}:c0=${c(primary)}:c1=${c(mixHex(primary, accent, 0.5))}:c2=${c(accent)}:nb_colors=3:speed=0.02,gblur=sigma=12,${up},noise=c0s=5:allf=t,format=yuv420p[${o.label}]`,
-      ];
-    case "particules":
-      return [
-        `gradients=${common}:c0=${c(background)}:c1=${c(mixHex(background, primary, 0.22))}:c2=${c(background)}:nb_colors=3:speed=0.015,gblur=sigma=20,${up},format=yuv420p[${o.label}g]`,
-        `color=c=${c(mixHex(primary, "#FFFFFF", 0.2))}:s=${o.W}x${o.H}:r=${o.fps}:d=${d},format=yuva420p[${o.label}c]`,
-        `life=s=${Math.round(w / 2.5)}x${Math.round(h / 2.5)}:mold=12:rate=${o.fps}:ratio=0.06:seed=${v.seed}:death_color=black:life_color=white:mold_color=0x404040,trim=duration=${d},gblur=sigma=2.5,${up},format=gray[${o.label}m]`,
-        `[${o.label}c][${o.label}m]alphamerge[${o.label}p]`,
-        `[${o.label}g][${o.label}p]overlay=shortest=1,vignette=PI/5,format=yuv420p[${o.label}]`,
-      ];
-    default:
-      return [
-        `gradients=${common}:c0=${c(primary)}:c1=${c(background)}:c2=${c(accent)}:c3=${c(background)}:nb_colors=4:speed=0.025,gblur=sigma=45,${up},noise=c0s=6:allf=t,format=yuv420p[${o.label}]`,
-      ];
+  if (!files) {
+    return {
+      args: [],
+      filters: [`color=c=${hex0x(v.colors[1] ?? "#0E0F11")}:s=${o.W}x${o.H}:r=${o.fps}:d=${d}[${o.label}]`],
+      inputs: 0,
+    };
   }
+  const loop = (file: string) => ["-loop", "1", "-framerate", String(o.fps), "-t", d, "-i", file];
+  const bw = Math.round((o.W * BG_MARGIN) / 2) * 2;
+  const bh = Math.round((o.H * BG_MARGIN) / 2) * 2;
+  const phase = (v.seed % 7) * 0.9;
+  const args = loop(files.image);
+  const filters = [
+    `[${o.nextInput}:v]scale=${bw}:${bh},crop=${o.W}:${o.H}:x='(iw-ow)/2*(1+0.9*sin(t*0.35+${phase}))':y='(ih-oh)/2*(1+0.9*cos(t*0.27+${phase}))',format=yuv420p[${o.label}${files.particles ? "b" : ""}]`,
+  ];
+  if (files.particles) {
+    args.push(...loop(files.particles));
+    filters.push(
+      `[${o.nextInput + 1}:v]scale=${o.W}:${o.H * 2},format=rgba[${o.label}p]`,
+      `[${o.label}b][${o.label}p]overlay=x=0:y='-mod(t*${Math.round(o.H / 12)},${o.H})':shortest=1,format=yuv420p[${o.label}]`,
+    );
+  }
+  return { args, filters, inputs: files.particles ? 2 : 1 };
 }
 
 /** Expressions zoompan : mouvement lent, zooms chocs et secousse. */
@@ -179,7 +188,17 @@ export function buildFfmpegArgs(
         `color=c=${hex0x(visual.color)}:s=${W}x${H}:r=${fps}:d=${clipDur.toFixed(3)},setsar=1,${finish}[${base}]`,
       );
     } else if (visual.type === "generated") {
-      filters.push(...generatedBackground(visual, { W, H, fps, dur: clipDur, label: `${base}g` }));
+      const bg = generatedBackground(visual, media.backgrounds?.get(backgroundKey(visual)), {
+        W,
+        H,
+        fps,
+        dur: clipDur,
+        label: `${base}g`,
+        nextInput: inputIndex,
+      });
+      args.push(...bg.args);
+      filters.push(...bg.filters);
+      inputIndex += bg.inputs;
       filters.push(`[${base}g]setsar=1,${finish}[${base}]`);
     } else {
       const asset = media.assets.get(visual.assetId);
@@ -325,6 +344,16 @@ export function buildFfmpegArgs(
       inputIndex++;
     }
   }
+  // Bruitages (souffle sur les transitions, impact sur les zooms chocs). La piste est préparée à part (buildSfxTrackArgs) : mélangée ici dans le même graphe, la
+  // chaîne asplit/adelay/amix des bruitages bloque FFmpeg indéfiniment.
+  let sfxLabel: string | null = null;
+  if (media.sfxPath && plan.sfx?.length) {
+    args.push("-i", media.sfxPath);
+    filters.push(`[${inputIndex}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[sfx]`);
+    sfxLabel = "sfx";
+    inputIndex++;
+  }
+
   if (voiceLabel && musicLabel) {
     if (plan.music?.duckUnderVoice) {
       filters.push(`[voice]asplit=2[voicemix][voicekey]`);
@@ -340,8 +369,13 @@ export function buildFfmpegArgs(
     filters.push(`[${inputIndex}:a]anull[mix]`);
     inputIndex++;
   }
+  let mixLabel = "mix";
+  if (sfxLabel) {
+    filters.push(`[mix][${sfxLabel}]amix=inputs=2:normalize=0:duration=first[mixfx]`);
+    mixLabel = "mixfx";
+  }
   filters.push(
-    `[mix]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,apad,atrim=0:${D}[aout]`,
+    `[${mixLabel}]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,apad,atrim=0:${D}[aout]`,
   );
 
   args.push(
@@ -375,6 +409,39 @@ export function buildFfmpegArgs(
     "+faststart",
     outPath,
   );
+  return args;
+}
+
+/**
+ * Commande FFmpeg qui fabrique la piste des bruitages (WAV) : chaque son est synthétisé
+ * (aucun fichier, aucune clé) puis placé à son instant. Null si le plan n'en a pas.
+ */
+export function buildSfxTrackArgs(plan: EditPlan, out: string): string[] | null {
+  const sfx = (plan.sfx ?? []).filter((x) => x.at < plan.durationSec - 0.1);
+  if (!sfx.length) return null;
+  const args = ["-y", "-hide_banner", "-loglevel", "error", "-nostdin"];
+  const filters: string[] = [];
+  const delayed: string[] = [];
+  let input = 0;
+  for (const kind of SFX_KINDS) {
+    const list = sfx.filter((x) => x.kind === kind);
+    if (!list.length) continue;
+    args.push("-f", "lavfi", "-i", SFX_SOURCES[kind]);
+    const outs = list.map((_, j) => `${kind}${j}`);
+    filters.push(
+      `[${input}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asplit=${list.length}${outs.map((o) => `[${o}s]`).join("")}`,
+    );
+    list.forEach((x, j) => {
+      const ms = Math.round(x.at * 1000);
+      filters.push(`[${outs[j]}s]adelay=${ms}|${ms}[${outs[j]}]`);
+      delayed.push(outs[j]!);
+    });
+    input++;
+  }
+  filters.push(
+    `${delayed.map((d) => `[${d}]`).join("")}amix=inputs=${delayed.length}:normalize=0:duration=longest[out]`,
+  );
+  args.push("-filter_complex", filters.join(";"), "-map", "[out]", "-c:a", "pcm_s16le", "-ar", "48000", out);
   return args;
 }
 

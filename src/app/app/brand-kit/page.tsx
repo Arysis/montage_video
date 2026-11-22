@@ -1,3 +1,12 @@
+// Polices fournies, chargées pour l'aperçu du Brand Kit.
+import "@fontsource/anton/400.css";
+import "@fontsource/bebas-neue/400.css";
+import "@fontsource/archivo-black/400.css";
+import "@fontsource/dm-serif-display/400.css";
+import "@fontsource/abril-fatface/400.css";
+import "@fontsource/luckiest-guy/400.css";
+import "@fontsource/poppins/400.css";
+import "@fontsource/poppins/600.css";
 import { eq } from "drizzle-orm";
 import type { Metadata } from "next";
 import { BrandKitEditor } from "@/components/BrandKitEditor";

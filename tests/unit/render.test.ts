@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assColor, assTime, buildAss, escapeAss } from "@/lib/render/ass";
+import { backgroundKey } from "@/lib/render/backgrounds";
 import { buildFfmpegArgs, cameraExpressions, mixHex } from "@/lib/render/ffmpeg";
 import { IDS, samplePlan } from "../helpers/fixtures";
 
@@ -72,8 +73,18 @@ describe("commande FFmpeg", () => {
     expect(graph).toContain("loudnorm=I=-14");
   });
 
-  it("génère les fonds animés et les transitions du script", () => {
-    expect(graph).toContain("gradients=");
+  it("anime les fonds dessinés et ajoute les transitions du script", () => {
+    const backgrounds = new Map(
+      plan.scenes
+        .filter((s) => s.visual.type === "generated")
+        .map((s) => [backgroundKey(s.visual as never), { image: "/tmp/bg.png", particles: null }]),
+    );
+    const withBg = buildFfmpegArgs(plan, { ...media, backgrounds }, "/tmp/out.mp4");
+    expect(withBg.join(" ")).toContain("-loop 1 -framerate 30");
+    expect(withBg[withBg.indexOf("-filter_complex") + 1]).toMatch(/crop=1080:1920:x='/);
+    // Sans image de fond, un aplat de la couleur de fond (jamais d'écran vide).
+    expect(graph).toContain("color=c=0x0E0F11");
+    expect(graph).not.toContain("gradients=");
     expect(graph).toContain("xfade=transition=fadewhite");
     expect(graph).toContain("xfade=transition=fade:");
     expect(graph).toContain("zoompan");

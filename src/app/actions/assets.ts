@@ -1,6 +1,7 @@
 "use server";
 
 import { and, eq } from "drizzle-orm";
+import { isBuiltInFont } from "@/lib/fonts";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth/session";
@@ -114,9 +115,8 @@ export async function saveBrandKit(input: BrandKitInput): Promise<{ error?: stri
     if (!a || !IMAGE_KINDS.includes(a.kind)) return { error: "Logo introuvable." };
   }
   // Une police importée doit exister dans la bibliothèque, sinon on accepte les polices fournies.
-  const builtIn = ["Bricolage Grotesque", "IBM Plex Sans"];
   for (const font of [data.titleFont, data.bodyFont]) {
-    if (builtIn.includes(font)) continue;
+    if (isBuiltInFont(font)) continue;
     const [f] = await db()
       .select({ id: schema.assets.id })
       .from(schema.assets)

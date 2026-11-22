@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Script } from "@/lib/script/schema";
+import type { Script, Structure, Tone } from "@/lib/script/schema";
 
 export type AssetSummary = {
   id: string;
@@ -14,6 +14,9 @@ export type ScriptRequest = {
   format: string;
   platforms: string[];
   targetDurationSec: number;
+  /** Structure et ton imposés par le créateur ("auto" : l'IA choisit). */
+  structure?: Structure;
+  tone?: Tone;
   assets: AssetSummary[];
 };
 

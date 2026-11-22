@@ -108,6 +108,23 @@ function needsContain(asset: PlanAsset, width: number, height: number): boolean 
   return ratio > 1.35 || ratio < 0.74;
 }
 
+/** Transitions qui « bougent » : un souffle les accompagne (pas les coupes ni les fondus). */
+const WHOOSH_ON = new Set(["slideleft", "slideup", "zoomin", "wipeleft", "hblur", "fadewhite"]);
+
+/** Bruitages : un souffle sur les transitions marquées, un impact sur les zooms chocs. */
+export function soundEffectsFor(scenes: PlanScene[]): EditPlan["sfx"] {
+  const out: EditPlan["sfx"] = [];
+  for (const s of scenes) {
+    if (WHOOSH_ON.has(s.transition.type))
+      out.push({ at: round(Math.max(0, s.end - s.transition.duration / 2 - 0.25)), kind: "whoosh" });
+    for (const p of s.punches) out.push({ at: round(s.start + p), kind: "hit" });
+    if (s.shake && !s.punches.includes(0)) out.push({ at: round(s.start), kind: "hit" });
+  }
+  // Pas deux bruitages à moins de 0,4 s : ça sonnerait brouillon.
+  out.sort((a, b) => a.at - b.at);
+  return out.filter((x, i) => i === 0 || x.at - out[i - 1]!.at >= 0.4).slice(0, 40);
+}
+
 /**
  * Construit le plan de montage à partir du script détaillé, de la prise de voix transcrite
  * et des choix de montage. Les coupes sont calées sur la voix : chaque scène commence au
@@ -236,6 +253,8 @@ export function buildPlan(input: BuildInput): EditPlan {
     s.transition = max < 0.12 ? { type: "cut", duration: 0 } : { ...s.transition, duration: round(max) };
   });
 
+  const sfx = directions.soundEffects === false ? [] : soundEffectsFor(scenes);
+
   const musicAsset = directions.musicAssetId ? assetById.get(directions.musicAssetId) : undefined;
   const logoAsset = brand.logoAssetId ? assetById.get(brand.logoAssetId) : undefined;
 
@@ -284,6 +303,7 @@ export function buildPlan(input: BuildInput): EditPlan {
       musicAsset && musicAsset.kind === "music"
         ? { assetId: musicAsset.id, volumeDb: directions.musicVolumeDb, duckUnderVoice: true }
         : null,
+    sfx,
     logo: logoAsset
       ? {
           assetId: logoAsset.id,

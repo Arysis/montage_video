@@ -88,6 +88,7 @@ export const directions: Directions = {
   musicAssetId: "44444444-4444-4444-8444-444444444444",
   musicVolumeDb: -20,
   subtitles: true,
+  soundEffects: true,
   scenes: [
     scene("s1", ["22222222-2222-4222-8222-222222222222"], {
       effects: [],

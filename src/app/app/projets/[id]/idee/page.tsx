@@ -32,6 +32,8 @@ export default async function IdeaPage({ params }: { params: Promise<{ id: strin
           format: p.format,
           platforms: p.platforms,
           duration: p.targetDurationSec,
+          structure: p.script?.structure ?? "auto",
+          tone: p.script?.tone ?? "auto",
           assets: linked,
         }}
       />

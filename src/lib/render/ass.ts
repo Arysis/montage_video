@@ -1,4 +1,5 @@
 import type { EditPlan } from "@/lib/plan/schema";
+import { boldFor } from "@/lib/fonts";
 import { buildCues, safeZone, subtitleLayout, wrapLines } from "@/lib/plan/subtitles";
 
 /** Couleur #RRGGBB vers le format ASS &HAABBGGRR. */
@@ -49,7 +50,7 @@ export function buildAss(plan: EditPlan, opts: { watermarkText?: string } = {}):
     marginR: number,
     marginV: number,
   ) =>
-    `Style: ${name},${font},${size},${primary},${primary},${outline},${outline},-1,0,0,0,100,100,0,0,${borderStyle},${outlineW},0,${alignment},${marginL},${marginR},${marginV},1`;
+    `Style: ${name},${font},${size},${primary},${primary},${outline},${outline},${boldFor(font) ? -1 : 0},0,0,0,100,100,0,0,${borderStyle},${outlineW},0,${alignment},${marginL},${marginR},${marginV},1`;
 
   const lines: string[] = [
     "[Script Info]",
